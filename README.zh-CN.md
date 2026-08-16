@@ -4,7 +4,7 @@
 
 [English README](./README.md) · [Releases](https://github.com/AIPMAndy/andytici/releases) · [Issues](https://github.com/AIPMAndy/andytici/issues)
 
-Andy题词 是一款面向中文口播创作者的 macOS 原生提词器 App。基于 [textream](https://github.com/f/textream) fork，针对中文创作者场景做了深度增强：实时 ASR 跟读、平台预设、开场 Hook 模板、口播表情/语气标记。
+Andy题词 是一款面向中文口播创作者的 macOS 原生提词器 App。针对中文创作者场景做了深度增强：实时 ASR 跟读、平台预设、开场 Hook 模板、口播表情/语气标记。
 
 ![AppIcon](Textream/Textream/Assets.xcassets/AppIcon.appiconset/icon_128x128@2x.png)
 
@@ -167,34 +167,12 @@ andytici/
 │   │   ├── MarqueeTextView.swift    ← 改造：emoji 渲染
 │   │   ├── NotchSettings.swift      ← 改造：默认 zh-CN
 │   │   ├── SpeechRecognizer.swift   ← 改造：注入词库
-│   │   └── …其余继承自 textream
+│   │   └── …其余新增模块
 │   └── TextreamTests/               ← 新增：5 套单元测试
 └── docs/superpowers/
     ├── specs/2026-08-16-andytici-design.md
     └── plans/2026-08-16-andytici-v0.1.md
 ```
-
----
-
-## 与 textream 的关系
-
-Andy题词 是 [textream](https://github.com/f/textream) 的 fork，本项目完全开源（MIT）。
-
-| | textream | Andy题词 |
-| --- | --- | --- |
-| 核心提词器 | ✅ | ✅（继承） |
-| 多语种 ASR | ✅ | ✅（继承 + 中文优先）|
-| Notch / 悬浮 / 全屏 | ✅ | ✅（继承）|
-| 外接显示器镜像 | ✅ | ✅（继承）|
-| 远程浏览器控制 | ✅ | ✅（继承）|
-| 平台预设 | ❌ | ✅（新增）|
-| 实时语速提示 | ❌ | ✅（新增）|
-| Hook 模板 | ❌ | ✅（新增）|
-| 脚本 emoji 标记 | ❌ | ✅（新增）|
-| 口播词库 | ❌ | ✅（新增）|
-
-如果你的使用场景是英文 / 多语种，建议用上游 [textream](https://github.com/f/textream)。
-如果你是中文创作者，希望提词器更懂你，欢迎使用 Andy题词。
 
 ---
 
@@ -219,7 +197,6 @@ Andy题词 是 [textream](https://github.com/f/textream) 的 fork，本项目完
 
 ## 致谢
 
-- 上游 [textream](https://github.com/f/textream) — Fatih Kadir Akın / Semih Kışlar — MIT
 - 本项目作者：Andy（个人项目）
 - 反馈渠道：[GitHub Issues](https://github.com/AIPMAndy/andytici/issues)
 

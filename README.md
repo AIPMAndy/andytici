@@ -7,7 +7,6 @@
 [![Platform](https://img.shields.io/badge/macOS-15.0%2B-blue?style=flat-square)](https://www.apple.com/macos/)
 [![Arch](https://img.shields.io/badge/arm64%20%7C%20x86__64-universal-orange?style=flat-square)](#download)
 [![License](https://img.shields.io/github/license/AIPMAndy/andytici?style=flat-square)](LICENSE)
-[![Forked from](https://img.shields.io/badge/forked%20from-textream-7B61FF?style=flat-square)](https://github.com/f/textream)
 
 [中文 README](./README.zh-CN.md) · [Releases](https://github.com/AIPMAndy/andytici/releases) · [Issues](https://github.com/AIPMAndy/andytici/issues)
 
@@ -18,8 +17,6 @@
 </p>
 
 Andy题词 (Andy Tici — "题词" = teleprompter cue) is a native macOS teleprompter designed for **口播 (kǒubō) video creators** on 抖音 / 小红书 / 视频号. It pairs an on-device Chinese speech recognizer with a word-level teleprompter, so the cursor follows your voice — not the other way around.
-
-Forked from [textream](https://github.com/f/textream) by Fatih Kadir Akın and Semih Kışlar (MIT). The Chinese-first adaptation, platform presets, and ASR integration are original work.
 
 ![Main window](docs/screenshots/main-window.jpg)
 
@@ -209,19 +206,12 @@ These are honestly listed in the [release acceptance doc](V0.1.1_RC2_ACCEPTANCE.
 
 Issues and PRs welcome. For substantial changes, please open an issue first to discuss scope.
 
-**Localization** — currently `zh-CN` only. Other locales inherit from the upstream textream project.
-
 **Build prerequisites** — macOS host. Apple Silicon strongly preferred (Intel builds work but aren't machine-tested).
 
 **Code style** — match the existing files: SwiftUI for views, `@MainActor` for UI entry points, MVVM-ish separation. Keep the Chinese-first UI strings in `Localizable.strings` (when added) rather than hard-coded.
 
 ---
 
-## Acknowledgments
-
-- [textream](https://github.com/f/textream) — the original macOS teleprompter by **Fatih Kadir Akın** and **Semih Kışlar** (MIT). Andy题词 is a fork.
-- All Chinese-first adaptations, platform presets, and ASR integration are original work by the maintainer.
-
 ## License
 
-[MIT](LICENSE) — same as upstream textream.
+[MIT](LICENSE).

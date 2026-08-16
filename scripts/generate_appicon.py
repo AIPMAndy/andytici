@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Generate Andy题词 AppIcon (黑金 #FFD700 on #0A0A0A) at all required macOS sizes.
 
-Outputs PNG files into Textream/Textream/Assets.xcassets/AppIcon.appiconset/
-overwriting the upstream textream icons.
+Outputs PNG files into Textream/Textream/Assets.xcassets/AppIcon.appiconset/,
+overwriting the placeholder icons.
 """
 from PIL import Image, ImageDraw, ImageFont
 import os

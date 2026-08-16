@@ -3,15 +3,14 @@
 **Date**: 2026-08-16
 **Author**: Claude (brainstorming session)
 **Status**: Approved
-**Upstream**: https://github.com/f/textream
 
 ---
 
 ## 1. Background
 
-textream 是一个成熟的 macOS 提词器 app（MIT 开源），但面向通用场景（直播主、采访者、演讲者、播客）。中文口播创作者（小红书 / 抖音 / 视频号 / 公众号视频）的脚本节奏、平台字数、Hook 模板、语气标记等场景缺少针对性优化。
+通用 macOS 提词器应用（直播主、采访者、演讲者、播客场景）已经较为成熟。中文口播创作者（小红书 / 抖音 / 视频号 / 公众号视频）的脚本节奏、平台字数、Hook 模板、语气标记等场景缺少针对性优化。
 
-**Andy题词** = textream 的中文口播特化版，保留上游核心架构（Speech 框架、Dynamic Island 浮窗、BrowserServer 远程投屏），叠加中文 ASR 优化与口播差异化能力。
+**Andy题词** 是为中文口播创作者独立打造的 macOS 提词器，覆盖 Speech 框架、Dynamic Island 浮窗、BrowserServer 远程投屏，叠加中文 ASR 优化与口播差异化能力。
 
 ---
 
@@ -22,9 +21,9 @@ textream 是一个成熟的 macOS 提词器 app（MIT 开源），但面向通�
 2. 实时语速提示覆盖"快/正常/慢"三档
 3. Hook 模板一键插入
 4. 表情/语气标记渲染
-5. 中文 ASR 默认优于 textream 英文优先
-6. 沿用 textream 的远程投屏（手机/iPad 扫码即用）
-7. 沿用 textream 的屏幕共享隐藏能力（录制时不漏提词器）
+5. 中文 ASR 默认 `zh-CN`
+6. 远程投屏（手机/iPad 扫码即用）
+7. 屏幕共享隐藏能力（录制时不漏提词器）
 8. MIT 开源 + Homebrew 安装
 
 ### 2.2 v0.1 Non-Goals
@@ -53,16 +52,16 @@ textream 是一个成熟的 macOS 提词器 app（MIT 开源），但面向通�
 
 ## 4. Architecture
 
-### 4.1 Inheritance from textream
+### 4.1 Core Modules
 
-完整沿用以下模块（保留文件路径，必要时改命名空间）：
+以下模块构成项目核心（保留文件路径，必要时改命名空间）：
 - `NotchOverlayController.swift` — Dynamic Island + 浮窗渲染
 - `ExternalDisplayController.swift` — Sidecar / 外接屏
 - `BrowserServer.swift` — HTTP + WebSocket 远程投屏
 - `PresentationNotesExtractor.swift` — PPTX 导入
 - `UpdateChecker.swift` — GitHub release 检测
 
-### 4.2 Modifications（沿用但改造）
+### 4.2 Modifications（改造）
 
 | File | Change |
 |---|---|
@@ -176,26 +175,25 @@ UI 反馈：
 - 列表：`点赞、关注、扣1、上链接、橱窗、3、2、1、福利、专属、链接、口令、福利价、上新、首发`
 
 ### 5.6 Screen Share Hiding
-沿用 textream 的 `Hide from screen share`：
+Hide from screen share：
 - macOS NSWindowSharingNone / NSScreen setAllowedScreen
 - 录制时（Zoom、FaceTime、OBS）提词器不出现
 
 ### 5.7 Browser Server / Remote
-沿用 `BrowserServer.swift`：
+`BrowserServer.swift`：
 - 启动 HTTP + WebSocket on port 7373（可调）
 - 暴露 QR code 给用户扫码
 - 手机浏览器实时显示提词器内容
 - v0.1 增量：浮窗宽度自适应（手机更窄）
 
 ### 5.8 PPTX Import
-沿用 `PresentationNotesExtractor.swift`：
+`PresentationNotesExtractor.swift`：
 - 拖入 .pptx → 解压 → 提取 presenter notes
 - 多页脚本自动拆分
 - v0.1 增量：notes 第一段作为 Hook 提示
 
 ### 5.9 Multi-Page Script
-沿用：
-- `.textream` → `.andytici` 文件格式（JSON，page 数组）
+- `.andytici` 文件格式（JSON，page 数组）
 - 多页导航（自动 / 手动）
 
 ### 5.10 URL Scheme
@@ -204,7 +202,6 @@ andytici://read?text=...
 ```
 - 注册在 Info.plist
 - 启动 app 并打开浮窗
-- 与 textream 行为一致
 
 ---
 
@@ -311,9 +308,9 @@ andytici://read?text=...
 
 | Risk | Mitigation |
 |---|---|
-| textream 上游重写 API 变化 | 锁 commit hash；只在本地 fork；不主动同步 |
+| 第三方 API 重写变化 | 锁 commit hash；只在本地 fork；不主动同步 |
 | macOS Speech 框架中文识别率不稳 | 注入常用词白名单；fallback 网络 ASR |
-| NSPanel 跨屏 bug | 沿用 textream 已修复路径，仅调样式 |
+| NSPanel 跨屏 bug | 保留已修复路径，仅调样式 |
 | GitHub Actions macOS runner 不可用 | 本地 xcodebuild 验证；release 手动打 DMG |
 | 用户误关闭浮窗 | `Esc` 退出保留；增加 `Cmd + .` 全局快捷键 |
 
