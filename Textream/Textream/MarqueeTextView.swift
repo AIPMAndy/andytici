@@ -438,7 +438,7 @@ struct WordFlowLayout: View {
         .coordinateSpace(name: "flowLayout")
     }
 
-    private func wordView(for item: WordItem, isNextWord: Bool) -> some View {
+    private func wordView(for item: WordItem, isNextWord: Bool) -> AnyView {
         let wordLen = item.word.count
         let charsIntoWord = highlightedCharCount - item.charOffset
         let litCount = max(0, min(wordLen, charsIntoWord))
@@ -449,7 +449,7 @@ struct WordFlowLayout: View {
         // Andy题词 ScriptTag emoji rendering — give each tag a distinct visual cue
         // (emphasis=bold+yellow, climax=orange+bold, pause=italic gray, etc.).
         if let tag = ScriptTag.tagForWord(item.word) {
-            return scriptedTagView(tag: tag, item: item)
+            return AnyView(scriptedTagView(tag: tag, item: item))
         }
 
         // When highlighting is off (classic/silence-paused), use uniform color
@@ -458,21 +458,23 @@ struct WordFlowLayout: View {
                 ? cueColor.opacity(cueUnreadOpacity)
                 : highlightColor
 
-            return Text(item.word + " ")
-                .font(item.isAnnotation ? Font(font).italic() : Font(font))
-                .foregroundStyle(uniformColor)
-                .background(
-                    GeometryReader { wordGeo in
-                        Color.clear.preference(
-                            key: WordYPreferenceKey.self,
-                            value: [item.id: wordGeo.frame(in: .named("flowLayout")).midY]
-                        )
+            return AnyView(
+                Text(item.word + " ")
+                    .font(item.isAnnotation ? Font(font).italic() : Font(font))
+                    .foregroundStyle(uniformColor)
+                    .background(
+                        GeometryReader { wordGeo in
+                            Color.clear.preference(
+                                key: WordYPreferenceKey.self,
+                                value: [item.id: wordGeo.frame(in: .named("flowLayout")).midY]
+                            )
+                        }
+                    )
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        onWordTap?(item.charOffset)
                     }
-                )
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    onWordTap?(item.charOffset)
-                }
+            )
         }
 
         // Annotations: italic, dimmed with cue color
@@ -481,21 +483,23 @@ struct WordFlowLayout: View {
                 ? cueColor.opacity(cueReadOpacity)
                 : cueColor.opacity(cueUnreadOpacity)
 
-            return Text(item.word + " ")
-                .font(Font(font).italic())
-                .foregroundStyle(annotationColor)
-                .background(
-                    GeometryReader { wordGeo in
-                        Color.clear.preference(
-                            key: WordYPreferenceKey.self,
-                            value: [item.id: wordGeo.frame(in: .named("flowLayout")).midY]
-                        )
+            return AnyView(
+                Text(item.word + " ")
+                    .font(Font(font).italic())
+                    .foregroundStyle(annotationColor)
+                    .background(
+                        GeometryReader { wordGeo in
+                            Color.clear.preference(
+                                key: WordYPreferenceKey.self,
+                                value: [item.id: wordGeo.frame(in: .named("flowLayout")).midY]
+                            )
+                        }
+                    )
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        onWordTap?(item.charOffset)
                     }
-                )
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    onWordTap?(item.charOffset)
-                }
+            )
         }
 
         // Dim color: highlight color variant for current word, full for unread
@@ -506,60 +510,75 @@ struct WordFlowLayout: View {
         // Base color for the whole word
         let wordColor: Color = isFullyLit ? highlightColor.opacity(0.3) : dimColor
 
-        return Text(item.word + " ")
-            .font(Font(font))
-            .foregroundStyle(wordColor)
-            .underline(isCurrentWord, color: wordColor)
-            .background(
-                GeometryReader { wordGeo in
-                    Color.clear.preference(
-                        key: WordYPreferenceKey.self,
-                        value: [item.id: wordGeo.frame(in: .named("flowLayout")).midY]
-                    )
+        return AnyView(
+            Text(item.word + " ")
+                .font(Font(font))
+                .foregroundStyle(wordColor)
+                .underline(isCurrentWord, color: wordColor)
+                .background(
+                    GeometryReader { wordGeo in
+                        Color.clear.preference(
+                            key: WordYPreferenceKey.self,
+                            value: [item.id: wordGeo.frame(in: .named("flowLayout")).midY]
+                        )
+                    }
+                )
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    onWordTap?(item.charOffset)
                 }
-            )
-            .contentShape(Rectangle())
-            .onTapGesture {
-                onWordTap?(item.charOffset)
-            }
+        )
     }
 
     // Andy题词 ScriptTag emoji render: each tag gets a distinctive color/weight.
-    @ViewBuilder
-    private func scriptedTagView(tag: ScriptTagToken.Tag, item: WordItem) -> some View {
+    // Returns AnyView (instead of opaque `some View`) so callers using @ViewBuilder
+    // can compose multiple branches with different concrete Text modifier types.
+    private func scriptedTagView(tag: ScriptTagToken.Tag, item: WordItem) -> AnyView {
         switch tag {
         case .emphasis:
             // 🎯 关键词 — bold + larger
-            Text(item.word + " ")
-                .font(Font(font).weight(.bold))
-                .foregroundStyle(Color.andyGold)
+            return AnyView(
+                Text(item.word + " ")
+                    .font(Font(font).weight(.bold))
+                    .foregroundStyle(Color.andyGold)
+            )
         case .highEnergy:
             // ⚡ 重点句 — yellow background pill
-            Text(item.word + " ")
-                .font(Font(font).weight(.bold))
-                .foregroundStyle(.black)
-                .padding(.horizontal, 4)
-                .background(Color.yellow)
+            return AnyView(
+                Text(item.word + " ")
+                    .font(Font(font).weight(.bold))
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 4)
+                    .background(Color.yellow)
+            )
         case .pause:
             // ⏸ 停顿 — italic gray
-            Text(item.word + " ")
-                .font(Font(font).italic())
-                .foregroundStyle(.gray)
+            return AnyView(
+                Text(item.word + " ")
+                    .font(Font(font).italic())
+                    .foregroundStyle(.gray)
+            )
         case .exclaim:
             // ❗ 感叹 — red + bold
-            Text(item.word + " ")
-                .font(Font(font).weight(.bold))
-                .foregroundStyle(Color.red)
+            return AnyView(
+                Text(item.word + " ")
+                    .font(Font(font).weight(.bold))
+                    .foregroundStyle(Color.red)
+            )
         case .hint:
             // 💡 提示 — small + gray italic
-            Text(item.word + " ")
-                .font(Font(font).size(max(font.pointSize - 4, 10)).italic())
-                .foregroundStyle(Color.gray)
+            return AnyView(
+                Text(item.word + " ")
+                    .font(.system(size: max(font.pointSize - 4, 10)).italic())
+                    .foregroundStyle(Color.gray)
+            )
         case .climax:
             // 🔥 情绪高潮 — orange + bold
-            Text(item.word + " ")
-                .font(Font(font).weight(.heavy))
-                .foregroundStyle(Color.orange)
+            return AnyView(
+                Text(item.word + " ")
+                    .font(Font(font).weight(.heavy))
+                    .foregroundStyle(Color.orange)
+            )
         }
     }
 
