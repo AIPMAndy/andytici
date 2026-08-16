@@ -1,0 +1,36 @@
+# macOS / Xcode junk
+.DS_Store
+*.swp
+*.swo
+*~
+*.bak
+*.orig
+
+# Xcode user state (don't ignore project file itself)
+*.xcuserstate
+xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+
+# Xcode build outputs
+build/
+build_universal/
+DerivedData/
+
+# No-Xcode CLI build outputs (build_no_xcode.sh)
+# - .build/swift_sources is a temp dir rewritten on every build
+# - build/release/Andy题词.app is the produced app bundle
+.build/
+
+# Stray screenshots / scratch artifacts (PNG without an obvious owner)
+# Anything matching "?5????" (e.g. 75559) is auto-screen-shot named; ignore it.
+/[0-9][0-9][0-9][0-9][0-9]
+/*.png
+/*.jpg
+/*.jpeg
+/*.gif
+
+# AND-specific temp dirs at parent level
+.tmp-logo/
+.tmp-*/

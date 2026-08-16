@@ -298,11 +298,11 @@ class BrowserServer {
     static func generateHTML(wsPort: UInt16) -> String {
         """
         <!DOCTYPE html>
-        <html lang="en">
+        <html lang="zh-CN">
         <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
-        <title>Textream</title>
+        <title>Andy题词 · 远端提词</title>
         <style>
         *{margin:0;padding:0;box-sizing:border-box}
         html,body{height:100%;overflow:hidden;background:#000;color:#fff;
@@ -385,9 +385,9 @@ class BrowserServer {
 
         <div id="waiting">
           <div class="icon">📡</div>
-          <div class="title">Waiting for Textream…</div>
-          <div class="sub">Start reading in the app to see your teleprompter here</div>
-          <div class="url" id="conn-status">Connecting…</div>
+          <div class="title">等待 Andy题词…</div>
+          <div class="sub">在 App 里开始朗读，这里就会同步显示</div>
+          <div class="url" id="conn-status">连接中…</div>
         </div>
 
         <div id="main">
@@ -403,7 +403,7 @@ class BrowserServer {
 
         <div id="done">
           <div class="check">✓</div>
-          <div class="label">Done!</div>
+          <div class="label">完成！</div>
         </div>
 
         <script>

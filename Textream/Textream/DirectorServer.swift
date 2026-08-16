@@ -44,7 +44,7 @@ class DirectorServer {
     private let maxConnections = 5
 
     // Dedicated queue for broadcasting to avoid blocking the main/UI thread
-    private let broadcastQueue = DispatchQueue(label: "com.textream.director.broadcast")
+    private let broadcastQueue = DispatchQueue(label: "com.andytici.director.broadcast")
     // Security: shared secret token for WebSocket authentication
     private var authToken: String = ""
 
@@ -314,11 +314,11 @@ class DirectorServer {
     static func generateHTML(wsPort: UInt16, authToken: String) -> String {
         """
         <!DOCTYPE html>
-        <html lang="en">
+        <html lang="zh-CN">
         <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
-        <title>Textream Director</title>
+        <title>Andy题词 · 导演控制台</title>
         <style>
         *{margin:0;padding:0;box-sizing:border-box}
         html,body{height:100%;overflow:hidden;background:#0a0a0a;color:#fff;

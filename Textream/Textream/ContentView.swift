@@ -28,17 +28,7 @@ struct ContentView: View {
     @State private var languageDetectionTask: Task<Void, Never>?
     @FocusState private var isTextFocused: Bool
 
-    private let defaultText = """
-欢迎使用 Andy题词！这是中文口播创作者的智能提词器，会实时跟随您的语速高亮当前读到的词。 [smile]
-
-当您开口朗读时，文本会实时高亮，跟着您的声音走。识别引擎会匹配您说出的词并保持进度。 [pause]
-
-您可以随时暂停、回头重读某段，高亮会跟着调整。当您读完所有内容，浮窗会自动关闭。 [nod]
-
-现在试着读这段文字看看效果。底部的波形条会显示您的说话活动，旁边会显示您最近说出的几个词。
-
-录制顺利！ [wave]
-"""
+    private let defaultText = ""
 
     private var languageLabel: String {
         let locale = NotchSettings.shared.speechLocale
@@ -102,16 +92,16 @@ struct ContentView: View {
                 .foregroundStyle(Color.accentColor)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("This text looks like \(suggestion.languageName).")
+                Text("这段文字像是 \(suggestion.languageName)。")
                     .font(.system(size: 12, weight: .semibold))
-                Text("Speech is currently set to \(languageLabel).")
+                Text("当前语音识别语言是 \(languageLabel)。")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
 
             Spacer(minLength: 8)
 
-            Button("Use \(suggestion.languageName)") {
+            Button("切换到 \(suggestion.languageName)") {
                 if isRecording {
                     stopRecording()
                 }
@@ -133,7 +123,7 @@ struct ContentView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
-            .help("Dismiss language suggestion")
+            .help("关闭语言建议")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
@@ -320,7 +310,7 @@ struct ContentView: View {
                         }
 
                         // Buttons pinned right
-                        HStack(spacing: 10) {
+                        HStack(spacing: 12) {
                             Spacer()
 
                             Button {
@@ -341,7 +331,7 @@ struct ContentView: View {
                                     }
                                 }
                                 .foregroundStyle(.white)
-                                .frame(width: 44, height: 44)
+                                .frame(width: 40, height: 40)
                                 .background(isRecording ? Color.orange : Color.red)
                                 .clipShape(Circle())
                                 .shadow(color: .black.opacity(0.2), radius: 8, y: 4)
@@ -357,13 +347,18 @@ struct ContentView: View {
                                     run()
                                 }
                             } label: {
-                                Image(systemName: isRunning ? "stop.fill" : "play.fill")
-                                    .font(.system(size: 16, weight: .semibold))
-                                    .foregroundStyle(.white)
-                                    .frame(width: 44, height: 44)
-                                    .background(isRunning ? Color.red : Color.accentColor)
-                                    .clipShape(Circle())
-                                    .shadow(color: .black.opacity(0.2), radius: 8, y: 4)
+                                HStack(spacing: 6) {
+                                    Image(systemName: isRunning ? "stop.fill" : "play.fill")
+                                        .font(.system(size: 16, weight: .bold))
+                                    Text(isRunning ? "停止" : "开始提词")
+                                        .font(.system(size: 14, weight: .semibold))
+                                }
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 18)
+                                .frame(height: 44)
+                                .background(isRunning ? Color.red : Color.accentColor)
+                                .clipShape(Capsule())
+                                .shadow(color: .black.opacity(0.2), radius: 10, y: 4)
                             }
                             .buttonStyle(.plain)
                             .disabled((!isRunning && !hasAnyContent) || isRecording)
@@ -380,10 +375,10 @@ struct ContentView: View {
                     Image(systemName: "doc.text")
                         .font(.system(size: 28, weight: .light))
                         .foregroundStyle(Color.accentColor)
-                    Text("Drop PowerPoint (.pptx) file")
+                    Text("拖入 PowerPoint (.pptx) 文件")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(.primary)
-                    Text("For Keynote or Google Slides,\nexport as PPTX first.")
+                    Text("Keynote 或 Google Slides 请先\n导出为 PPTX 再拖入。")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -407,15 +402,15 @@ struct ContentView: View {
                         let ext = url.pathExtension.lowercased()
                         if ext == "key" {
                             DispatchQueue.main.async {
-                                dropAlertTitle = "Conversion Required"
-                                dropError = "Keynote files can't be imported directly. Please export your Keynote presentation as PowerPoint (.pptx) first, then drop the exported file here."
+                                dropAlertTitle = "需要先转换格式"
+                                dropError = "无法直接导入 Keynote 文件。请先在 Keynote 中把演示文稿导出为 PowerPoint (.pptx) 格式，再拖入导出文件。"
                             }
                             return
                         }
                         guard ext == "pptx" else {
                             DispatchQueue.main.async {
-                                dropAlertTitle = "Import Error"
-                                dropError = "Unsupported file. Drop a PowerPoint (.pptx) file."
+                                dropAlertTitle = "不支持的文件"
+                                dropError = "仅支持 PowerPoint (.pptx) 文件，请确认格式后重试。"
                             }
                             return
                         }
@@ -438,10 +433,10 @@ struct ContentView: View {
                 .font(.system(size: 40, weight: .light))
                 .foregroundStyle(.secondary)
 
-            Text("Director Mode")
+            Text("导演台已连接")
                 .font(.system(size: 22, weight: .bold))
 
-            Text(service.directorIsReading ? "Reading from director…" : "Waiting for director to send script…")
+            Text(service.directorIsReading ? "正在朗读导演推送的脚本…" : "等待导演推送脚本…")
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
 
@@ -480,7 +475,7 @@ struct ContentView: View {
             Button {
                 showSettings = true
             } label: {
-                Text("Open Settings")
+                Text("打开设置")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
             }
@@ -516,15 +511,15 @@ struct ContentView: View {
             }
         }
         .alert(dropAlertTitle, isPresented: Binding(get: { dropError != nil }, set: { if !$0 { dropError = nil } })) {
-            Button("OK") { dropError = nil }
+            Button("好") { dropError = nil }
         } message: {
             Text(dropError ?? "")
         }
-        .alert("Microphone Unavailable", isPresented: Binding(
+        .alert("麦克风不可用", isPresented: Binding(
             get: { dictation.error != nil },
             set: { if !$0 { dictation.error = nil } }
         )) {
-            Button("OK") { dictation.error = nil }
+            Button("好") { dictation.error = nil }
         } message: {
             Text(dictation.error ?? "")
         }
@@ -545,7 +540,7 @@ struct ContentView: View {
                                     .fill(.orange)
                                     .frame(width: 6, height: 6)
                             }
-                            Text(service.currentFileURL?.deletingPathExtension().lastPathComponent ?? "Untitled")
+                            Text(service.currentFileURL?.deletingPathExtension().lastPathComponent ?? "未命名")
                                 .font(.system(size: 11, weight: .medium))
                                 .lineLimit(1)
                         }
@@ -566,7 +561,7 @@ struct ContentView: View {
                         HStack(spacing: 3) {
                             Image(systemName: "plus")
                                 .font(.system(size: 10, weight: .semibold))
-                            Text("Page")
+                            Text("加页")
                                 .font(.system(size: 11, weight: .medium))
                         }
                         .foregroundStyle(.secondary)
@@ -580,7 +575,7 @@ struct ContentView: View {
                         HStack(spacing: 3) {
                             Image(systemName: "sparkles")
                                 .font(.system(size: 10, weight: .semibold))
-                            Text("Hook")
+                            Text("金句")
                                 .font(.system(size: 11, weight: .medium))
                         }
                         .foregroundStyle(Color.andyGold)
@@ -681,7 +676,7 @@ struct ContentView: View {
 
     private func pagePreview(_ page: String) -> String {
         let trimmed = page.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty { return "Empty" }
+        if trimmed.isEmpty { return "空白页" }
         let words = trimmed.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
         let preview = words.prefix(5).joined(separator: " ")
         return preview.count > 30 ? String(preview.prefix(30)) + "…" : preview
@@ -725,7 +720,7 @@ struct ContentView: View {
                         Button(role: .destructive) {
                             removePage(at: index)
                         } label: {
-                            Label("Delete Page", systemImage: "trash")
+                            Label("删除页", systemImage: "trash")
                         }
                     }
                 }
@@ -742,7 +737,7 @@ struct ContentView: View {
                     service.currentPageIndex = service.pages.count - 1
                 }
             } label: {
-                Label("Add Page", systemImage: "plus")
+                Label("添加页面", systemImage: "plus")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -849,15 +844,15 @@ struct AboutView: View {
 
             // App name & version
             VStack(spacing: 4) {
-                Text("Textream")
+                Text("Andy题词")
                     .font(.system(size: 20, weight: .bold))
-                Text("Version \(appVersion)")
+                Text("版本 \(appVersion)")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
 
             // Description
-            Text("A free, open-source teleprompter that highlights your script in real-time as you speak.")
+            Text("中文口播创作者的智能提词器，朗读时高亮当前字词，自动跟随你的声音推进。")
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -869,7 +864,7 @@ struct AboutView: View {
                     HStack(spacing: 5) {
                         Image(systemName: "chevron.left.forwardslash.chevron.right")
                             .font(.system(size: 11, weight: .semibold))
-                        Text("GitHub")
+                        Text("GitHub 仓库")
                             .font(.system(size: 12, weight: .medium))
                     }
                     .foregroundStyle(.primary)
@@ -883,7 +878,7 @@ struct AboutView: View {
                     HStack(spacing: 5) {
                         Image(systemName: "hand.raised.fill")
                             .font(.system(size: 11, weight: .semibold))
-                        Text("Privacy")
+                        Text("隐私政策")
                             .font(.system(size: 12, weight: .medium))
                     }
                     .foregroundStyle(.primary)
@@ -913,10 +908,13 @@ struct AboutView: View {
             Divider().padding(.horizontal, 20)
 
             VStack(spacing: 4) {
-                Text("Andy题词")
+                Text("Andy题词 · 中文口播创作者专用")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
-                Text("基于 textream fork · MIT")
+                Text("原始作者：Fatih Kadir Akın · 基于 textream fork")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                Text("Andy题词 修改与维护 · MIT · © 2026 Andy")
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
             }

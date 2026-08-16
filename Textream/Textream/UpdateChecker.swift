@@ -77,11 +77,11 @@ class UpdateChecker {
 
     private func showUpdateAvailable(latestVersion: String, releaseURL: String) {
         let alert = NSAlert()
-        alert.messageText = "Update Available"
-        alert.informativeText = "Textream \(latestVersion) is available. You are currently running \(currentVersion)."
+        alert.messageText = "发现新版本"
+        alert.informativeText = "Andy题词 \(latestVersion) 已发布，当前版本 \(currentVersion)。"
         alert.alertStyle = .informational
-        alert.addButton(withTitle: "Download")
-        alert.addButton(withTitle: "Later")
+        alert.addButton(withTitle: "前往下载")
+        alert.addButton(withTitle: "稍后")
 
         if alert.runModal() == .alertFirstButtonReturn {
             if let url = URL(string: releaseURL) {
@@ -92,19 +92,19 @@ class UpdateChecker {
 
     private func showUpToDate() {
         let alert = NSAlert()
-        alert.messageText = "You're Up to Date"
-        alert.informativeText = "Textream \(currentVersion) is the latest version."
+        alert.messageText = "已是最新版本"
+        alert.informativeText = "Andy题词 \(currentVersion) 已经是最新版本。"
         alert.alertStyle = .informational
-        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "好的")
         alert.runModal()
     }
 
     private func showError(_ message: String) {
         let alert = NSAlert()
-        alert.messageText = "Update Check Failed"
+        alert.messageText = "检查更新失败"
         alert.informativeText = message
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "好的")
         alert.runModal()
     }
 }

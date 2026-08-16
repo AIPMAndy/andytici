@@ -311,12 +311,12 @@ enum SettingsTab: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .appearance: return "Appearance"
-        case .guidance:   return "Guidance"
-        case .teleprompter: return "Teleprompter"
-        case .external:   return "External"
-        case .browser:    return "Remote"
-        case .director:   return "Director"
+        case .appearance: return "外观"
+        case .guidance:   return "跟随"
+        case .teleprompter: return "提词器"
+        case .external:   return "外接屏"
+        case .browser:    return "远程"
+        case .director:   return "导演台"
         }
     }
 
@@ -345,7 +345,7 @@ struct SettingsView: View {
         HStack(spacing: 0) {
             // Sidebar
             VStack(alignment: .leading, spacing: 2) {
-                Text("Settings")
+                Text("设置")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.tertiary)
                     .textCase(.uppercase)
@@ -402,7 +402,7 @@ struct SettingsView: View {
                 Divider()
 
                 HStack {
-                    Button("Reset All") {
+                    Button("全部重置") {
                         showResetConfirmation = true
                     }
                     .buttonStyle(.borderless)
@@ -411,7 +411,7 @@ struct SettingsView: View {
 
                     Spacer()
 
-                    Button("Done") {
+                    Button("完成") {
                         dismiss()
                     }
                     .keyboardShortcut(.defaultAction)
@@ -425,15 +425,15 @@ struct SettingsView: View {
         .frame(width: 500)
         .frame(minHeight: 280, maxHeight: 500)
         .background(.ultraThinMaterial)
-        .alert("Reset All Settings?", isPresented: $showResetConfirmation) {
-            Button("Cancel", role: .cancel) { }
-            Button("Reset", role: .destructive) {
+        .alert("重置全部设置？", isPresented: $showResetConfirmation) {
+            Button("取消", role: .cancel) { }
+            Button("重置", role: .destructive) {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     resetAllSettings()
                 }
             }
         } message: {
-            Text("This will restore all settings to their defaults.")
+            Text("所有设置将恢复到默认值。")
         }
         .onAppear {
             if settings.overlayMode != .fullscreen {
@@ -488,7 +488,7 @@ struct SettingsView: View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 14) {
                 // Font Family
-                Text("Font")
+                Text("字体")
                     .font(.system(size: 13, weight: .medium))
 
                 HStack(spacing: 8) {
@@ -522,7 +522,7 @@ struct SettingsView: View {
                 }
 
                 // Text Size
-                Text("Size")
+                Text("字号")
                     .font(.system(size: 13, weight: .medium))
 
                 HStack(spacing: 8) {
@@ -558,7 +558,7 @@ struct SettingsView: View {
                 Divider()
 
                 // Highlight Color
-                Text("Highlight Color")
+                Text("高亮色")
                     .font(.system(size: 13, weight: .medium))
 
                 HStack(spacing: 8) {
@@ -603,7 +603,7 @@ struct SettingsView: View {
                 }
 
                 // Cue Color
-                Text("Cue Color")
+                Text("提示色")
                     .font(.system(size: 13, weight: .medium))
 
                 HStack(spacing: 8) {
@@ -648,7 +648,7 @@ struct SettingsView: View {
                 }
 
                 // Cue Brightness
-                Text("Cue Brightness")
+                Text("提示亮度")
                     .font(.system(size: 13, weight: .medium))
 
                 Picker("", selection: $settings.cueBrightness) {
@@ -662,13 +662,13 @@ struct SettingsView: View {
                 Divider()
 
                 // Dimensions
-                Text("Dimensions")
+                Text("尺寸")
                     .font(.system(size: 13, weight: .medium))
 
                 VStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
-                            Text("Width")
+                            Text("宽度")
                                 .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
                             Spacer()
@@ -685,7 +685,7 @@ struct SettingsView: View {
 
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
-                            Text("Height")
+                            Text("高度")
                                 .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
                             Spacer()
@@ -725,7 +725,7 @@ struct SettingsView: View {
                 Divider()
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Speech Language")
+                    Text("语音识别语言")
                         .font(.system(size: 13, weight: .medium))
                     Picker("", selection: $settings.speechLocale) {
                         ForEach(SFSpeechRecognizer.supportedLocales().sorted(by: { $0.identifier < $1.identifier }), id: \.identifier) { locale in
@@ -741,10 +741,10 @@ struct SettingsView: View {
                 Divider()
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Microphone")
+                    Text("麦克风")
                         .font(.system(size: 13, weight: .medium))
                     Picker("", selection: $settings.selectedMicUID) {
-                        Text("System Default").tag("")
+                        Text("系统默认").tag("")
                         ForEach(availableMics) { mic in
                             Text(mic.name).tag(mic.uid)
                         }
@@ -758,10 +758,10 @@ struct SettingsView: View {
 
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
-                        Text("Scroll Speed")
+                        Text("滚动速度")
                             .font(.system(size: 13, weight: .medium))
                         Spacer()
-                        Text(String(format: "%.1f words/s", settings.scrollSpeed))
+                        Text(String(format: "%.1f 字/秒", settings.scrollSpeed))
                             .font(.system(size: 12, weight: .regular, design: .monospaced))
                             .foregroundStyle(.secondary)
                     }
@@ -771,11 +771,11 @@ struct SettingsView: View {
                         step: 0.5
                     )
                     HStack {
-                        Text("Slower")
+                        Text("慢")
                             .font(.system(size: 10))
                             .foregroundStyle(.tertiary)
                         Spacer()
-                        Text("Faster")
+                        Text("快")
                             .font(.system(size: 10))
                             .foregroundStyle(.tertiary)
                     }
@@ -813,7 +813,7 @@ struct SettingsView: View {
                 if settings.overlayMode == .pinned {
                     Divider()
 
-                    Text("Display")
+                    Text("显示")
                         .font(.system(size: 13, weight: .medium))
 
                     Picker("", selection: $settings.notchDisplayMode) {
@@ -839,20 +839,20 @@ struct SettingsView: View {
                     Divider()
 
                     Toggle(isOn: $settings.overlayTransparency) {
-                        Text("Transparency")
+                        Text("透明背景")
                             .font(.system(size: 13, weight: .medium))
                     }
                     .toggleStyle(.switch)
                     .controlSize(.small)
 
-                    Text("Makes the overlay see-through so desktop content shows through.")
+                    Text("提词器背景透明，可以看清桌面内容。")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
 
                     if settings.overlayTransparency {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
-                                Text("Amount")
+                                Text("程度")
                                     .font(.system(size: 12))
                                     .foregroundStyle(.secondary)
                                 Spacer()
@@ -866,11 +866,11 @@ struct SettingsView: View {
                                 step: 0.05
                             )
                             HStack {
-                                Text("More transparent")
+                                Text("更透明")
                                     .font(.system(size: 10))
                                     .foregroundStyle(.tertiary)
                                 Spacer()
-                                Text("Less transparent")
+                                Text("更不透明")
                                     .font(.system(size: 10))
                                     .foregroundStyle(.tertiary)
                             }
@@ -883,20 +883,20 @@ struct SettingsView: View {
                     Divider()
 
                     Toggle(isOn: $settings.followCursorWhenUndocked) {
-                        Text("Follow Cursor")
+                        Text("跟随光标")
                             .font(.system(size: 13, weight: .medium))
                     }
                     .toggleStyle(.switch)
                     .controlSize(.small)
 
-                    Text("The window follows your cursor and sticks to its bottom-right.")
+                    Text("窗口跟随光标，停在光标右下角。")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
 
                     Divider()
 
                     Toggle(isOn: $settings.floatingGlassEffect) {
-                        Text("Glass Effect")
+                        Text("玻璃效果")
                             .font(.system(size: 13, weight: .medium))
                     }
                     .toggleStyle(.switch)
@@ -905,7 +905,7 @@ struct SettingsView: View {
                     if settings.floatingGlassEffect {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
-                                Text("Opacity")
+                                Text("不透明度")
                                     .font(.system(size: 12))
                                     .foregroundStyle(.secondary)
                                 Spacer()
@@ -925,7 +925,7 @@ struct SettingsView: View {
                 if settings.overlayMode == .fullscreen {
                     Divider()
 
-                    Text("Display")
+                    Text("显示")
                         .font(.system(size: 13, weight: .medium))
 
                     displayPicker(
@@ -938,7 +938,7 @@ struct SettingsView: View {
                         Image(systemName: "escape")
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(.secondary)
-                        Text("Press Esc to stop the teleprompter.")
+                        Text("按 Esc 退出提词。")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                     }
@@ -955,9 +955,9 @@ struct SettingsView: View {
                 // Options
                 Toggle(isOn: $settings.showElapsedTime) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Elapsed Time")
+                        Text("显示用时")
                             .font(.system(size: 13, weight: .medium))
-                        Text("Display a running timer while the teleprompter is active.")
+                        Text("提词时显示已朗读时间。")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                     }
@@ -966,9 +966,9 @@ struct SettingsView: View {
 
                 Toggle(isOn: $settings.hideFromScreenShare) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Hide from Screen Sharing")
+                        Text("屏幕录制时隐藏")
                             .font(.system(size: 13, weight: .medium))
-                        Text("Hide the overlay from screen recordings and video calls.")
+                        Text("录屏和视频通话时，提词器自动隐藏。")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                     }
@@ -978,14 +978,14 @@ struct SettingsView: View {
                 Divider()
 
                 // Pagination
-                Text("Pagination")
+                Text("分页")
                     .font(.system(size: 13, weight: .semibold))
 
                 Toggle(isOn: $settings.autoNextPage) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Auto Next Page")
+                        Text("自动翻页")
                             .font(.system(size: 13, weight: .medium))
-                        Text("Automatically advance to the next page after a countdown.")
+                        Text("读完后倒计时自动跳到下一页。")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                     }
@@ -994,12 +994,12 @@ struct SettingsView: View {
 
                 if settings.autoNextPage {
                     HStack {
-                        Text("Countdown")
+                        Text("倒计时")
                             .font(.system(size: 13))
                         Spacer()
                         Picker("", selection: $settings.autoNextPageDelay) {
-                            Text("3 seconds").tag(3)
-                            Text("5 seconds").tag(5)
+                            Text("3 秒").tag(3)
+                            Text("5 秒").tag(5)
                         }
                         .pickerStyle(.segmented)
                         .frame(width: 160)
@@ -1017,7 +1017,7 @@ struct SettingsView: View {
 
     private var externalTab: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Show the teleprompter on an external display or Sidecar iPad.")
+            Text("在外接显示器或 Sidecar iPad 上显示提词器。")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
 
@@ -1036,7 +1036,7 @@ struct SettingsView: View {
             if settings.externalDisplayMode == .mirror {
                 Divider()
 
-                Text("Mirror Axis")
+                Text("镜像方向")
                     .font(.system(size: 13, weight: .medium))
 
                 Picker("", selection: $settings.mirrorAxis) {
@@ -1055,14 +1055,14 @@ struct SettingsView: View {
             if settings.externalDisplayMode != .off {
                 Divider()
 
-                Text("Target Display")
+                Text("目标屏幕")
                     .font(.system(size: 13, weight: .medium))
 
                 displayPicker(
                     screens: availableScreens,
                     selectedID: $settings.externalScreenID,
                     onRefresh: { refreshScreens() },
-                    emptyMessage: "No external displays detected. Connect a display or enable Sidecar."
+                    emptyMessage: "未检测到外接显示器。请连接显示器或开启 Sidecar。"
                 )
             }
             Spacer()
@@ -1079,12 +1079,12 @@ struct SettingsView: View {
     private var browserTab: some View {
         ScrollView(.vertical, showsIndicators: false) {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Scan the QR code or open the URL with your iPhone, Android or TV browser on the same Wi-Fi network.")
+            Text("用 iPhone、Android 或电视浏览器扫描二维码，或在同一 Wi-Fi 下打开此 URL。")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
 
             Toggle(isOn: $settings.browserServerEnabled) {
-                Text("Enable Remote Connection")
+                Text("启用远程连接")
                     .font(.system(size: 13, weight: .medium))
             }
             .toggleStyle(.switch)
@@ -1131,13 +1131,13 @@ struct SettingsView: View {
                         .fill(Color.accentColor.opacity(0.08))
                 )
 
-                DisclosureGroup("Advanced", isExpanded: $showAdvanced) {
+                DisclosureGroup("高级", isExpanded: $showAdvanced) {
                     VStack(alignment: .leading, spacing: 10) {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Port")
+                            Text("端口")
                                 .font(.system(size: 13, weight: .medium))
                             HStack(spacing: 8) {
-                                TextField("Port", text: Binding(
+                                TextField("端口", text: Binding(
                                     get: { String(settings.browserServerPort) },
                                     set: { str in
                                         if let val = UInt16(str), val >= 1024 {
@@ -1148,13 +1148,13 @@ struct SettingsView: View {
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 80)
 
-                                Text("Restart required after change")
+                                Text("修改后需重启")
                                     .font(.system(size: 11))
                                     .foregroundStyle(.tertiary)
 
                                 Spacer()
 
-                                Button("Restart") {
+                                Button("重启") {
                                     TextreamService.shared.browserServer.stop()
                                     TextreamService.shared.browserServer.start()
                                     localIP = BrowserServer.localIPAddress() ?? "localhost"
@@ -1168,7 +1168,7 @@ struct SettingsView: View {
                             Image(systemName: "info.circle")
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
-                            Text("Uses ports \(String(settings.browserServerPort)) (HTTP) and \(String(settings.browserServerPort + 1)) (WebSocket).")
+                            Text("使用端口 \(String(settings.browserServerPort))（HTTP）和 \(String(settings.browserServerPort + 1))（WebSocket）。")
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
                         }
@@ -1193,12 +1193,12 @@ struct SettingsView: View {
     private var directorTab: some View {
         ScrollView(.vertical, showsIndicators: false) {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Director Mode lets a remote person control your teleprompter script in real-time via a web browser. The editor will be disabled while active.")
+            Text("导演台允许他人通过浏览器实时遥控你的提词脚本。开启后，编辑器会自动锁定。")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
 
             Toggle(isOn: $settings.directorModeEnabled) {
-                Text("Enable Director Mode")
+                Text("启用导演台")
                     .font(.system(size: 13, weight: .medium))
             }
             .toggleStyle(.switch)
@@ -1249,18 +1249,18 @@ struct SettingsView: View {
                     Image(systemName: "info.circle")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
-                    Text("Word tracking is forced when the director starts reading.")
+                    Text("导演开始朗读时会强制切换到字词跟随模式。")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
 
-                DisclosureGroup("Advanced", isExpanded: $showDirectorAdvanced) {
+                DisclosureGroup("高级", isExpanded: $showDirectorAdvanced) {
                     VStack(alignment: .leading, spacing: 10) {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Port")
+                            Text("端口")
                                 .font(.system(size: 13, weight: .medium))
                             HStack(spacing: 8) {
-                                TextField("Port", text: Binding(
+                                TextField("端口", text: Binding(
                                     get: { String(settings.directorServerPort) },
                                     set: { str in
                                         if let val = UInt16(str), val >= 1024 {
@@ -1271,13 +1271,13 @@ struct SettingsView: View {
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 80)
 
-                                Text("Restart required after change")
+                                Text("修改后需重启")
                                     .font(.system(size: 11))
                                     .foregroundStyle(.tertiary)
 
                                 Spacer()
 
-                                Button("Restart") {
+                                Button("重启") {
                                     TextreamService.shared.directorServer.stop()
                                     TextreamService.shared.directorServer.start()
                                     directorLocalIP = BrowserServer.localIPAddress() ?? "localhost"
@@ -1291,7 +1291,7 @@ struct SettingsView: View {
                             Image(systemName: "info.circle")
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
-                            Text("Uses ports \(String(settings.directorServerPort)) (HTTP) and \(String(settings.directorServerPort + 1)) (WebSocket).")
+                            Text("使用端口 \(String(settings.directorServerPort))（HTTP）和 \(String(settings.directorServerPort + 1))（WebSocket）。")
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
                         }
@@ -1371,7 +1371,7 @@ struct SettingsView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 10, weight: .semibold))
-                    Text("Refresh")
+                    Text("刷新")
                         .font(.system(size: 11, weight: .medium))
                 }
                 .foregroundStyle(.secondary)

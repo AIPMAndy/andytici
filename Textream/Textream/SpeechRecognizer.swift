@@ -195,7 +195,7 @@ class SpeechRecognizer {
         // Check microphone permission first
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .denied, .restricted:
-            failListening("Microphone access denied. Open System Settings → Privacy & Security → Microphone to allow Textream.")
+            failListening("麦克风权限被拒绝。请打开 系统设置 → 隐私与安全性 → 麦克风，并允许 Andy题词。")
             openMicrophoneSettings()
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
@@ -206,14 +206,14 @@ class SpeechRecognizer {
                     if granted {
                         self.beginAfterMicrophoneAccess(for: generation)
                     } else {
-                        self.failListening("Microphone access denied. Open System Settings → Privacy & Security → Microphone to allow Textream.")
+                        self.failListening("麦克风权限被拒绝。请打开 系统设置 → 隐私与安全性 → 麦克风，并允许 Andy题词。")
                     }
                 }
             }
         case .authorized:
             beginAfterMicrophoneAccess(for: generation)
         @unknown default:
-            failListening("Microphone authorization is unavailable.")
+            failListening("麦克风权限不可用。")
         }
     }
 
@@ -236,7 +236,7 @@ class SpeechRecognizer {
                 case .authorized:
                     self.beginRecognition()
                 default:
-                    self.failListening("Speech recognition not authorized. Open System Settings → Privacy & Security → Speech Recognition to allow Textream.")
+                    self.failListening("语音识别权限未授权。请打开 系统设置 → 隐私与安全性 → 语音识别，并允许 Andy题词。")
                     self.openSpeechRecognitionSettings()
                 }
             }

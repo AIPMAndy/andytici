@@ -42,10 +42,10 @@ enum FontFamilyPreset: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .sans:     return "Sans"
-        case .serif:    return "Serif"
-        case .mono:     return "Mono"
-        case .dyslexia: return "Dyslexia"
+        case .sans:     return "黑体"
+        case .serif:    return "宋体"
+        case .mono:     return "等宽"
+        case .dyslexia: return "易读"
         }
     }
 
@@ -107,12 +107,12 @@ enum FontColorPreset: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .white:  return "White"
-        case .yellow: return "Yellow"
-        case .green:  return "Green"
-        case .blue:   return "Blue"
-        case .pink:   return "Pink"
-        case .orange: return "Orange"
+        case .white:  return "白色"
+        case .yellow: return "黄色"
+        case .green:  return "绿色"
+        case .blue:   return "蓝色"
+        case .pink:   return "粉色"
+        case .orange: return "橙色"
         }
     }
 
@@ -137,10 +137,10 @@ enum CueBrightness: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .dim:    return "Dim"
-        case .low:    return "Low"
-        case .medium: return "Medium"
-        case .bright: return "Bright"
+        case .dim:    return "暗淡"
+        case .low:    return "低"
+        case .medium: return "中"
+        case .bright: return "高"
         }
     }
 
@@ -174,17 +174,17 @@ enum OverlayMode: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .pinned:     return "Pinned to Notch"
-        case .floating:   return "Floating Window"
-        case .fullscreen: return "Fullscreen"
+        case .pinned:     return "顶部固定"
+        case .floating:   return "浮窗"
+        case .fullscreen: return "全屏"
         }
     }
 
     var description: String {
         switch self {
-        case .pinned:     return "Anchored below the notch at the top of your screen."
-        case .floating:   return "A draggable window you can place anywhere. Always on top."
-        case .fullscreen: return "Fullscreen teleprompter on the selected display. Press Esc to stop."
+        case .pinned:     return "锚定在屏幕顶部、刘海下方。"
+        case .floating:   return "可拖动的悬浮窗口，始终在最前。"
+        case .fullscreen: return "在选定屏幕上全屏提词，按 Esc 退出。"
         }
     }
 
@@ -206,15 +206,15 @@ enum NotchDisplayMode: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .followMouse:  return "Follow Mouse"
-        case .fixedDisplay: return "Fixed Display"
+        case .followMouse:  return "跟随鼠标"
+        case .fixedDisplay: return "固定屏幕"
         }
     }
 
     var description: String {
         switch self {
-        case .followMouse:  return "The notch moves to whichever display your mouse is on."
-        case .fixedDisplay: return "The notch stays on the selected display."
+        case .followMouse:  return "窗口跟随鼠标所在的屏幕。"
+        case .fixedDisplay: return "窗口固定在选定的屏幕上。"
         }
     }
 }
@@ -228,17 +228,17 @@ enum ExternalDisplayMode: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .off:          return "Off"
-        case .teleprompter: return "Teleprompter"
-        case .mirror:       return "Mirror"
+        case .off:          return "关闭"
+        case .teleprompter: return "提词器"
+        case .mirror:       return "镜像"
         }
     }
 
     var description: String {
         switch self {
-        case .off:          return "No external display output."
-        case .teleprompter: return "Fullscreen teleprompter on the selected display."
-        case .mirror:       return "Horizontally flipped for use with a prompter mirror rig."
+        case .off:          return "不输出到外接屏幕。"
+        case .teleprompter: return "在外接屏幕上全屏提词。"
+        case .mirror:       return "水平翻转，用于实体提词镜。"
         }
     }
 }
@@ -252,17 +252,17 @@ enum MirrorAxis: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .horizontal: return "Horizontal"
-        case .vertical:   return "Vertical"
-        case .both:       return "Both"
+        case .horizontal: return "水平"
+        case .vertical:   return "垂直"
+        case .both:       return "双向"
         }
     }
 
     var description: String {
         switch self {
-        case .horizontal: return "Flipped left-to-right. Standard for prompter mirror rigs."
-        case .vertical:   return "Flipped top-to-bottom."
-        case .both:       return "Flipped on both axes (rotated 180°)."
+        case .horizontal: return "左右翻转，标准提词镜用法。"
+        case .vertical:   return "上下翻转。"
+        case .both:       return "双向翻转（旋转 180°）。"
         }
     }
 
@@ -290,17 +290,17 @@ enum ListeningMode: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .classic:        return "Classic"
-        case .silencePaused:  return "Voice-Activated"
-        case .wordTracking:   return "Word Tracking"
+        case .classic:        return "匀速滚动"
+        case .silencePaused:  return "人声控制"
+        case .wordTracking:   return "字词跟随"
         }
     }
 
     var description: String {
         switch self {
-        case .classic:        return "Auto-scrolls at a constant speed. No microphone needed."
-        case .silencePaused:  return "Scrolls while you speak, pauses when you're silent."
-        case .wordTracking:   return "Tracks each word you say and highlights it in real time."
+        case .classic:        return "匀速滚动，无需麦克风。"
+        case .silencePaused:  return "说话时滚动，沉默时暂停。"
+        case .wordTracking:   return "实时识别朗读的字词，并高亮跟踪。"
         }
     }
 

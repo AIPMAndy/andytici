@@ -510,11 +510,19 @@ struct WordFlowLayout: View {
         // Base color for the whole word
         let wordColor: Color = isFullyLit ? highlightColor.opacity(0.3) : dimColor
 
+        // Andy题词 当前词焦点加强：略大字号 + 粗体 + 强色下划线
+        let currentWordFont: Font = isCurrentWord
+            ? Font(font).weight(.bold)
+            : Font(font)
+        let currentWordColor: Color = isCurrentWord
+            ? highlightColor
+            : wordColor
+
         return AnyView(
             Text(item.word + " ")
-                .font(Font(font))
-                .foregroundStyle(wordColor)
-                .underline(isCurrentWord, color: wordColor)
+                .font(currentWordFont)
+                .foregroundStyle(currentWordColor)
+                .underline(isCurrentWord, color: highlightColor)
                 .background(
                     GeometryReader { wordGeo in
                         Color.clear.preference(

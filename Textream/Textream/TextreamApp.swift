@@ -140,38 +140,44 @@ struct TextreamApp: App {
                 }
                 #if !APP_STORE
                 Divider()
-                Button("Check for Updates…") {
+                Button("检查更新…") {
                     UpdateChecker.shared.checkForUpdates()
                 }
                 #endif
             }
             CommandGroup(after: .appSettings) {
-                Button("Settings…") {
+                Button("设置…") {
                     NotificationCenter.default.post(name: .openSettings, object: nil)
                 }
                 .keyboardShortcut(",", modifiers: .command)
             }
             CommandGroup(replacing: .newItem) {
-                Button("Open File or Presentation…") {
+                Button("打开脚本或演示稿…") {
                     TextreamService.shared.openFile()
                 }
                 .keyboardShortcut("o", modifiers: .command)
 
                 Divider()
 
-                Button("Save") {
+                Button("保存") {
                     TextreamService.shared.saveFile()
                 }
                 .keyboardShortcut("s", modifiers: .command)
 
-                Button("Save As…") {
+                Button("另存为…") {
                     TextreamService.shared.saveFileAs()
                 }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
             }
+            CommandGroup(after: .toolbar) {
+                Button("开始提词") {
+                    TextreamService.shared.readCurrentPage()
+                }
+                .keyboardShortcut("p", modifiers: .command)
+            }
             CommandGroup(replacing: .windowArrangement) { }
             CommandGroup(replacing: .help) {
-                Button("Andy题词 帮助") {
+                Button("Andy题词 官网与帮助") {
                     if let url = URL(string: "https://github.com/AIPMAndy/andytici") {
                         NSWorkspace.shared.open(url)
                     }

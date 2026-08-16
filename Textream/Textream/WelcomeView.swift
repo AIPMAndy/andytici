@@ -55,10 +55,10 @@ struct WelcomeView: View {
                 .font(.title3)
                 .foregroundColor(AndyTheme.textSecondary)
             VStack(alignment: .leading, spacing: 8) {
-                feature(icon: "speedometer", text: "实时语速提示")
                 feature(icon: "tv", text: "Dynamic Island 浮窗")
                 feature(icon: "qrcode.viewfinder", text: "手机扫码远程投屏")
                 feature(icon: "eye.slash", text: "录制时自动隐藏")
+                feature(icon: "text.bubble.fill", text: "Hook 模板 + emoji 标记")
             }
             .padding(.top, 8)
         }
@@ -66,7 +66,7 @@ struct WelcomeView: View {
 
     private var presetStep: some View {
         VStack(spacing: 16) {
-            Text("选择主要发布平台")
+            Text("了解各平台字数与节奏")
                 .font(.title3)
                 .foregroundColor(AndyTheme.textPrimary)
             Picker("平台", selection: $selectedPreset) {
@@ -86,6 +86,10 @@ struct WelcomeView: View {
                     .foregroundColor(AndyTheme.textSecondary)
             }
             .padding(.top, 8)
+            Text("后续 Andy题词 会按此校准字数与节奏提示")
+                .font(.footnote)
+                .foregroundColor(AndyTheme.textSecondary)
+                .padding(.top, 4)
         }
     }
 
@@ -115,7 +119,6 @@ struct WelcomeView: View {
                 if step < 2 {
                     step += 1
                 } else {
-                    UserDefaults.standard.set(selectedPreset.persistenceKey, forKey: "selectedPlatformPreset")
                     UserDefaults.standard.set(true, forKey: "hasShownWelcome")
                     isPresented = false
                 }
