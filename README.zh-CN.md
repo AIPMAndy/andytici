@@ -2,9 +2,13 @@
 
 > **口播创作者提词器** · 抖音 / 小红书 / 视频号 专用 · 黑金高级感
 
-Andy题词 是一款面向中文口播创作者的 macOS 原生提词器 App。基于 [textream](https://github.com/f/textream) fork，针对中文创作者场景做了深度增强：实时语速提示、平台预设、开场 Hook 模板、口播表情/语气标记。
+[English README](./README.md) · [Releases](https://github.com/AIPMAndy/andytici/releases) · [Issues](https://github.com/AIPMAndy/andytici/issues)
 
-![AppIcon](Textream/Textream/Assets.xcassets/AppIcon.appiconset/icon_128x128.png)
+Andy题词 是一款面向中文口播创作者的 macOS 原生提词器 App。基于 [textream](https://github.com/f/textream) fork，针对中文创作者场景做了深度增强：实时 ASR 跟读、平台预设、开场 Hook 模板、口播表情/语气标记。
+
+![AppIcon](Textream/Textream/Assets.xcassets/AppIcon.appiconset/icon_128x128@2x.png)
+
+![主窗口](docs/screenshots/main-window.jpg)
 
 ---
 
@@ -12,23 +16,37 @@ Andy题词 是一款面向中文口播创作者的 macOS 原生提词器 App。�
 
 | 维度 | 通用提词器 | Andy题词 |
 | --- | --- | --- |
-| 识别语种 | 多语种通用 | **中文优先**（on-device zh-CN ASR 默认）|
-| 口播词库 | 无 | **35 个常用词自动注入**（点赞/关注/上链接/扣1/福利…）|
-| 平台预设 | 无 | **抖音 / 小红书 / 视频号** 语速自适应 |
-| 实时语速 | 无 | **5 秒滑窗**判断慢/正常/快，颜色提示 |
+| 识别语种 | 多语种通用 | **中文优先**（on-device `zh-CN` ASR 默认）|
+| 口播词库 | 无 | **~36 个常用词自动注入**（点赞/关注/上链接/扣1/福利…）作为 `contextualStrings` |
+| 平台预设 | 无 | **抖音 / 小红书 / 视频号 / 通用** 语速自适应 |
+| 跟读模式 | 计时器估算，易漂移 | **词级 ASR 跟读**，暂停/加速都不掉队 |
 | Hook 模板 | 无 | **11 个中文开场模板**（痛点/对比/数字/悬念）|
 | 脚本标记 | 无 | **🎯/⚡/⏸/❗/💡/🔥** emoji 标记关键词/停顿/高潮 |
 | 视觉风格 | 单色 | **黑金 #FFD700 + #0A0A0A** 高级感 |
+| 构建 | 依赖 Xcode | **无 Xcode**：Command Line Tools 即可构建 |
 
 ---
 
-## 功能特性（v0.1）
+## 当前版本：v0.1.1
 
-### 🎙️ 中文优先
+完整中文界面 + 新 logo（金色「题」字 + 黑底 + 对话气泡）+ universal binary（arm64 + x86_64 一份 dmg 通吃）。
 
-- 默认开启本地语音识别（macOS 13+ on-device）
-- 中文 ASR locale `zh-CN` 自动注入
-- 口播常用词（点赞、关注、扣 1、上链接、福利、家人们、姐妹们…）作为 `contextualStrings`，识别准确率显著提升
+### 主要变化（相对 v0.1.0）
+
+- **全中文化**：所有 NSAlert、菜单、Services、Settings、Overlay、外接显示提示
+- **新 logo**：金色题字 + 黑底圆角 + 对话气泡（10 个尺寸 icns）
+- **Universal binary**：arm64 + x86_64 fat 单 dmg，4 MB
+- **P0 修复**：Services selector / WelcomeView sheet / 窗口标题 / 开始提词按钮 / selectedPlatformPreset
+- **P1 修复**：entitlements 收紧 / 当前词焦点加强
+- **无 Xcode 构建**：`./build_no_xcode.sh` 一行命令出包
+
+### 历史里程碑
+
+- **v0.1** ✅ 纯提词器增强（平台预设 + 语速 + Hook + emoji + 词库）
+- **v0.1.1** ✅ 全中文化 + 新 logo + universal binary（**当前**）
+- **v0.2** 计划：脚本片段库（收藏常用口播段落）、多平台一键分发文案改写
+- **v0.3** 计划：AI 辅助（生成开场 / 改写口语化 / 自动生成 emoji 标记）
+- **v1.0** 计划：跨端（iPad / iPhone 远程遥控 + Apple Watch 翻页） + Apple 公证
 
 ### 📱 平台预设
 
@@ -76,28 +94,48 @@ Andy题词 是一款面向中文口播创作者的 macOS 原生提词器 App。�
 
 ## 安装
 
-### Homebrew（推荐）
+### 手动下载（当前推荐）
+
+1. 前往 [Releases](https://github.com/AIPMAndy/andytici/releases) 下载最新的 `Andy题词_0.1.1_universal.dmg`（约 4 MB）
+2. 拖入 `/Applications` 文件夹
+3. **首次启动**：因为是 ad-hoc 签名（未 Apple 公证），系统会拦截。绕过方式：
+   - 在 Finder 里 **右键** Andy题词.app → **打开** → 确认
+   - 或：系统设置 → 隐私与安全性 → 向下滚动 → "Andy题词 已被阻止打开" → **仍要打开**
+
+   只需做一次，后续启动正常。
+
+4. 首次启动时会弹「Andy题词 需要使用麦克风…」授权框，**点「好」**。这是 ASR 跟读模式必需的。如果拒绝，应用会自动打开系统设置面板让你重开。
+
+### Homebrew（计划中）
 
 ```bash
 brew install --cask andytici
 ```
 
-### 手动下载
+> ⚠️ 当前 Casks/andytici.rb 还是 sha256 占位符。计划随下一次 Apple Developer ID 公证一起发布。
 
-1. 前往 [Releases](https://github.com/AIPMAndy/andytici/releases) 下载最新 `.dmg`
-2. 拖入 `Applications` 文件夹
-3. 首次启动需在「系统设置 → 隐私与安全性 → 麦克风」中允许
-
-### 自行构建
+### 自行构建（无需 Xcode）
 
 ```bash
 git clone https://github.com/AIPMAndy/andytici.git
 cd andytici/Textream
-open Textream.xcodeproj
-# Xcode → Product → Archive → Distribute App
+./build_no_xcode.sh                # 仅 arm64（最快）
+# 或
+./build_no_xcode.sh --universal    # arm64 + x86_64 fat（约 9 MB）
+open build_universal/release/Andy题词.app
 ```
 
-需要 Xcode 16+ / Swift 6+ / macOS 13+。
+需要 macOS 15.0+ + Command Line Tools (`xcode-select --install`)。
+
+### 用 Xcode 构建（可选）
+
+```bash
+cd andytici/Textream
+open Textream.xcodeproj
+# Product → Archive → Distribute App
+```
+
+需要 Xcode 16+ / Swift 6+ / macOS 15+。
 
 ---
 
@@ -160,12 +198,22 @@ Andy题词 是 [textream](https://github.com/f/textream) 的 fork，本项目完
 
 ---
 
+## 已知限制（诚实记录）
+
+- **未 Apple 公证**：当前为 ad-hoc 签名。其他用户首次启动需右键打开绕过 Gatekeeper。计划随 Apple Developer ID 一起做公证（[V0.1.1_RC2_ACCEPTANCE.md](V0.1.1_RC2_ACCEPTANCE.md) 详细说明）
+- **Intel Mac 实机未跑**：universal binary 已用 `lipo` + `swiftc -target x86_64-apple-macos15.0` 验证，但只在本机 Apple Silicon 上完整跑过
+- **外接显示器**：代码完整但未接副屏实测过
+- **CI 测试套件**：`TextreamTests` 存在但 CI 没跑（需 Xcode test runner）
+
+---
+
 ## 路线图
 
 - **v0.1** ✅ 纯提词器增强（平台预设 + 语速 + Hook + emoji + 词库）
+- **v0.1.1** ✅ **当前**：全中文化 + 新 logo + universal binary + 无 Xcode 构建
 - **v0.2** 计划：脚本片段库（收藏常用口播段落）、多平台一键分发文案改写
 - **v0.3** 计划：AI 辅助（生成开场 / 改写口语化 / 自动生成 emoji 标记）
-- **v1.0** 计划：跨端（iPad / iPhone 远程遥控 + Apple Watch 翻页）
+- **v1.0** 计划：跨端（iPad / iPhone 远程遥控 + Apple Watch 翻页）+ Apple 公证
 
 ---
 
