@@ -2,6 +2,8 @@
 
 > **口播创作者提词器** · 抖音 / 小红书 / 视频号 专用 · 黑金高级感
 
+> ⚠️ **v0.1 状态：源码已就绪，无 DMG 发布包** — 代码完成度已通过 `swiftc -typecheck` + 静态校验全部通过，但当前**未上传签名 `.dmg` 到 GitHub Release**。Homebrew Cask `brew install --cask andytici` 与「手动下载」均暂不可用。请在带 **Xcode 16+ / macOS 13+** 的机器上自行 `open Textream.xcodeproj` 构建，或等待 v0.1.1 正式发布。
+
 Andy题词 是一款面向中文口播创作者的 macOS 原生提词器 App。基于 [textream](https://github.com/f/textream) fork，针对中文创作者场景做了深度增强：实时语速提示、平台预设、开场 Hook 模板、口播表情/语气标记。
 
 ![AppIcon](Textream/Textream/Assets.xcassets/AppIcon.appiconset/icon_128x128.png)
@@ -84,14 +86,14 @@ brew install --cask andytici
 
 ### 手动下载
 
-1. 前往 [Releases](https://github.com/andy/andytici/releases) 下载最新 `.dmg`
+1. 前往 [Releases](https://github.com/AIPMAndy/andytici/releases) 下载最新 `.dmg`
 2. 拖入 `Applications` 文件夹
 3. 首次启动需在「系统设置 → 隐私与安全性 → 麦克风」中允许
 
 ### 自行构建
 
 ```bash
-git clone https://github.com/andy/andytici.git
+git clone https://github.com/AIPMAndy/andytici.git
 cd andytici/Textream
 open Textream.xcodeproj
 # Xcode → Product → Archive → Distribute App
@@ -173,7 +175,7 @@ Andy题词 是 [textream](https://github.com/f/textream) 的 fork，本项目完
 
 - 上游 [textream](https://github.com/f/textream) — Fatih Kadir Akın / Semih Kışlar — MIT
 - 本项目作者：Andy（个人项目）
-- 反馈渠道：[GitHub Issues](https://github.com/andy/andytici/issues)
+- 反馈渠道：[GitHub Issues](https://github.com/AIPMAndy/andytici/issues)
 
 ## 许可证
 

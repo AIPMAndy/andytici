@@ -179,8 +179,8 @@ class TextreamService: NSObject, ObservableObject {
 
     func saveFileAs() {
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.init(filenameExtension: "textream")!]
-        panel.nameFieldStringValue = "Untitled.textream"
+        panel.allowedContentTypes = [.init(filenameExtension: "andytici")!]
+        panel.nameFieldStringValue = "Untitled.andytici"
         panel.canCreateDirectories = true
 
         panel.begin { [weak self] response in
@@ -213,7 +213,7 @@ class TextreamService: NSObject, ObservableObject {
 
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [
-            .init(filenameExtension: "textream")!,
+            .init(filenameExtension: "andytici")!,
             .init(filenameExtension: "key")!,
             .init(filenameExtension: "pptx")!,
         ]
@@ -445,9 +445,9 @@ class TextreamService: NSObject, ObservableObject {
         readText(text)
     }
 
-    // URL scheme handler: textream://read?text=Hello%20World
+    // URL scheme handler: andytici://read?text=Hello%20World
     func handleURL(_ url: URL) {
-        guard url.scheme == "textream" else { return }
+        guard url.scheme == "andytici" else { return }
 
         if url.host == "read" || url.path == "/read" {
             if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),

@@ -865,7 +865,7 @@ struct AboutView: View {
 
             // Links
             HStack(spacing: 12) {
-                Link(destination: URL(string: "https://github.com/f/textream")!) {
+                Link(destination: URL(string: "https://github.com/AIPMAndy/andytici")!) {
                     HStack(spacing: 5) {
                         Image(systemName: "chevron.left.forwardslash.chevron.right")
                             .font(.system(size: 11, weight: .semibold))
@@ -879,7 +879,7 @@ struct AboutView: View {
                     .clipShape(Capsule())
                 }
 
-                Link(destination: URL(string: "https://textream.net/privacy.html")!) {
+                Link(destination: URL(string: "https://github.com/AIPMAndy/andytici/blob/main/docs/PRIVACY.md")!) {
                     HStack(spacing: 5) {
                         Image(systemName: "hand.raised.fill")
                             .font(.system(size: 11, weight: .semibold))
@@ -894,18 +894,17 @@ struct AboutView: View {
                 }
 
                 #if !APP_STORE
-                Link(destination: URL(string: "https://donate.stripe.com/aFa8wO4NF2S96jDfn4dMI09")!) {
+                Link(destination: URL(string: "https://github.com/AIPMAndy/andytici/issues")!) {
                     HStack(spacing: 5) {
-                        Image(systemName: "heart.fill")
+                        Image(systemName: "ladybug.fill")
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.pink)
-                        Text("Donate")
+                        Text("反馈")
                             .font(.system(size: 12, weight: .medium))
                     }
                     .foregroundStyle(.primary)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 7)
-                    .background(Color.pink.opacity(0.1))
+                    .background(Color.andyGold.opacity(0.15))
                     .clipShape(Capsule())
                 }
                 #endif

@@ -95,7 +95,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {
-            if url.pathExtension == "textream" {
+            if url.pathExtension == "andytici" {
                 TextreamService.shared.openFileAtURL(url)
                 // Show the main window for file opens
                 for window in NSApp.windows where !(window is NSPanel) {
@@ -123,7 +123,7 @@ struct TextreamApp: App {
         WindowGroup {
             ContentView()
                 .onOpenURL { url in
-                    if url.pathExtension == "textream" {
+                    if url.pathExtension == "andytici" {
                         TextreamService.shared.openFileAtURL(url)
                     } else {
                         TextreamService.shared.handleURL(url)
@@ -135,7 +135,7 @@ struct TextreamApp: App {
 
         .commands {
             CommandGroup(replacing: .appInfo) {
-                Button("About Textream") {
+                Button("关于 Andy题词") {
                     NotificationCenter.default.post(name: .openAbout, object: nil)
                 }
                 #if !APP_STORE
@@ -171,8 +171,8 @@ struct TextreamApp: App {
             }
             CommandGroup(replacing: .windowArrangement) { }
             CommandGroup(replacing: .help) {
-                Button("Textream Help") {
-                    if let url = URL(string: "https://github.com/f/textream") {
+                Button("Andy题词 帮助") {
+                    if let url = URL(string: "https://github.com/AIPMAndy/andytici") {
                         NSWorkspace.shared.open(url)
                     }
                 }

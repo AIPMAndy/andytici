@@ -399,9 +399,9 @@
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Textream;
+				INFOPLIST_KEY_CFBundleDisplayName = "Andy题词";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Fatih Kadir Akın";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Andy";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Textream lets nearby devices view or control your teleprompter over your local network.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Textream needs microphone access to listen to your speech and highlight words as you read them.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Textream uses Apple's speech-recognition service to follow along as you read and highlight the current word. Microphone audio may be processed by Apple.";
@@ -409,9 +409,9 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.6.5;
+				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.andy.tici;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = "Andy题词";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -440,9 +440,9 @@
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Textream;
+				INFOPLIST_KEY_CFBundleDisplayName = "Andy题词";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Fatih Kadir Akın";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Andy";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Textream lets nearby devices view or control your teleprompter over your local network.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Textream needs microphone access to listen to your speech and highlight words as you read them.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Textream uses Apple's speech-recognition service to follow along as you read and highlight the current word. Microphone audio may be processed by Apple.";
@@ -450,9 +450,9 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.6.5;
+				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.andy.tici;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = "Andy题词";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -540,20 +540,20 @@
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Textream;
+				INFOPLIST_KEY_CFBundleDisplayName = "Andy题词";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Fatih Kadir Akın";
-				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Textream lets nearby devices view or control your teleprompter over your local network.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Textream needs microphone access to listen to your speech and highlight words as you read them.";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Textream uses Apple's speech-recognition service to follow along as you read and highlight the current word. Microphone audio may be processed by Apple.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Andy";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Andy题词 lets nearby devices view or control your teleprompter over your local network.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Andy题词 needs microphone access to listen to your speech and highlight words as you read them.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Andy题词 uses Apple's speech-recognition service to follow along as you read and highlight the current word. Microphone audio may be processed by Apple.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.6.5;
+				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.andy.tici;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = "Andy题词";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "APP_STORE $(inherited)";
