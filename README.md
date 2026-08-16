@@ -29,7 +29,7 @@ Forked from [textream](https://github.com/f/textream) by Fatih Kadir Akın and S
 
 | Problem with general teleprompters | How Andy题词 solves it |
 | --- | --- |
-| English-first ASR; misreads 点赞/扣1/上链接 | On-device `zh-CN` recognizer + 35 cue words injected as `contextualStrings` |
+| English-first ASR; misreads 点赞/扣1/上链接 | On-device `zh-CN` recognizer + ~36 cue words injected as `contextualStrings` |
 | One-size-fits-all pacing | Platform presets (抖音 / 小红书 / 视频号 / 通用) tune scroll speed, idle threshold, and font size |
 | Auto-scroll drifts when you pause or speed up | Word-level highlight tracks the recognizer, not a timer — pause anywhere, speed up, it follows |
 | No mirror to a second screen | Built-in external display mirroring via `ExternalDisplayController` |
