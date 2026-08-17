@@ -801,16 +801,37 @@ struct NotchOverlayView: View {
     }
 
     var body: some View {
-        GeometryReader { geo in
+        // R74: cache all NotchSettings.shared singletons + listeningMode +
+        // isDone at body outer. The previous body (lines 803-937 before this
+        // edit) read NotchSettings.shared.* inline (overlayTransparency,
+        // overlayTransparencyOpacity, showElapsedTime, autoNextPage,
+        // scrollSpeed) and listeningMode 4+ times (each read goes through
+        // the @Observable singleton tracker via the `listeningMode` computed
+        // property at line 736). Body re-renders at 20 Hz in classic /
+        // silencePaused modes (scrollTimer drives timerWordProgress), so
+        // this was 200+ singleton reads/sec from one body. Hoisting to body
+        // outer lets every inner closure (GeometryReader, scrollTimer,
+        // onChange) reuse the same captured values via Swift's enclosing-
+        // scope capture rule.
+        let mode = listeningMode
+        let done = isDone
+        let speed = NotchSettings.shared.scrollSpeed
+        let showElapsed = NotchSettings.shared.showElapsedTime
+        let autoNext = NotchSettings.shared.autoNextPage
+        let isTransparent = NotchSettings.shared.overlayTransparency
+        let transparencyOpacity = NotchSettings.shared.overlayTransparencyOpacity
+        return GeometryReader { geo in
             let targetHeight = menuBarHeight + baseTextHeight + extraHeight
             let currentHeight = notchHeight + (targetHeight - notchHeight) * expansion
             let currentWidth = notchWidth + (geo.size.width - notchWidth) * expansion
 
             ZStack(alignment: .top) {
                 // Container shape — solid black or transparent with blur
-                let isTransparent = NotchSettings.shared.overlayTransparency
-                let transparencyOpacity = NotchSettings.shared.overlayTransparencyOpacity
-
+                // R74: served from body-cached `isTransparent` and
+                // `transparencyOpacity`. The previous GeometryReader
+                // closure re-read NotchSettings.shared.* inline; the body-
+                // level cache removes those reads (they now happen once per
+                // body render, not once per GeometryReader re-evaluation).
                 if isTransparent {
                     // Blurred background layer clipped to the Dynamic Island shape
                     NotchBlurView()
@@ -841,7 +862,8 @@ struct NotchOverlayView: View {
                     VStack(spacing: 0) {
                         HStack {
                             Spacer()
-                            if NotchSettings.shared.showElapsedTime {
+                            // R74: served from body-cached `showElapsed`.
+                            if showElapsed {
                                 ElapsedTimeView(fontSize: 11)
                                     .padding(.trailing, 12)
                             }
@@ -850,7 +872,8 @@ struct NotchOverlayView: View {
 
                         if content.showPagePicker {
                             pagePickerView
-                        } else if isDone && (listeningMode == .wordTracking || hasNextPage) {
+                        // R74: served from body-cached `mode` and `done`.
+                        } else if done && (mode == .wordTracking || hasNextPage) {
                             doneView
                         } else {
                             prompterView
@@ -891,11 +914,16 @@ struct NotchOverlayView: View {
                 }
             }
         }
-        .animation(.easeInOut(duration: 0.5), value: isDone)
-        .onChange(of: isDone) { _, done in
-            if done {
+        .animation(.easeInOut(duration: 0.5), value: done)
+        // R74: served from body-cached `done`, `mode`, `autoNext` via the
+        // enclosing-scope capture rule. `.onChange(of: isDone)` fires on the
+        // @Observable change; `done` is the body-render-captured value at
+        // that moment. The closure also captures `mode` and `autoNext` from
+        // body-level lets.
+        .onChange(of: isDone) { _, d in
+            if d {
                 // In word tracking mode, stop listening when page is done
-                if listeningMode == .wordTracking {
+                if mode == .wordTracking {
                     speechRecognizer.stop()
                 }
                 if !hasNextPage {
@@ -903,22 +931,25 @@ struct NotchOverlayView: View {
                     // In classic/silence-paused modes the speaker may still be
                     // talking after the auto-scroll finishes, so keep the text
                     // visible and let them dismiss manually (X button or Esc).
-                    if listeningMode == .wordTracking {
+                    if mode == .wordTracking {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                             speechRecognizer.shouldDismiss = true
                         }
                     }
-                } else if NotchSettings.shared.autoNextPage {
+                } else if autoNext {
                     startCountdown()
                 }
             } else {
                 cancelCountdown()
             }
         }
+        // R74: scrollTimer closure (20 Hz in active scroll modes) now
+        // captures `mode`, `done`, and `speed` from body outer — saves 3
+        // singleton reads per tick. Previously read `isDone`, `listeningMode`,
+        // and `NotchSettings.shared.scrollSpeed` inline at each tick.
         .onReceive(scrollTimer) { _ in
-            guard !isDone, !isUserScrolling else { return }
-            let speed = NotchSettings.shared.scrollSpeed // words per second
-            switch listeningMode {
+            guard !done, !isUserScrolling else { return }
+            switch mode {
             case .classic:
                 if !isPaused {
                     timerWordProgress += speed * 0.1
