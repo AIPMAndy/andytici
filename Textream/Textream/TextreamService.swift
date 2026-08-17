@@ -415,7 +415,6 @@ class TextreamService: NSObject, ObservableObject {
         // Feed director server with speech recognizer
         directorServer.showContent(
             speechRecognizer: overlayController.speechRecognizer,
-            words: words,
             totalCharCount: totalCharCount
         )
 
@@ -457,7 +456,7 @@ class TextreamService: NSObject, ObservableObject {
         overlayController.speechRecognizer.updateText(trimmed, preservingCharCount: preservedCharCount)
 
         // Update director server
-        directorServer.updateContent(words: words, totalCharCount: totalCharCount)
+        directorServer.updateContent(totalCharCount: totalCharCount)
 
         // Update external display & browser
         externalDisplayController.overlayContent.words = words

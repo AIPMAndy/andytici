@@ -12,7 +12,10 @@ import CoreGraphics
 // MARK: - Director State (App → Web)
 
 struct DirectorState: Codable {
-    let words: [String]
+    // R57: `words` removed — phone remote's handleState JS never reads
+    // s.words. It renders text via contenteditable #edit-text / #read-text,
+    // not a words array. Per-tick JSON encode was allocating ~500-1000
+    // strings × 10 Hz for nothing.
     let highlightedCharCount: Int
     let totalCharCount: Int
     let isActive: Bool
@@ -54,7 +57,6 @@ class DirectorServer {
     private var authToken: String = ""
 
     // Content state
-    private var words: [String] = []
     private var totalCharCount: Int = 0
     private weak var speechRecognizer: SpeechRecognizer?
     private var contentActive: Bool = false
@@ -130,16 +132,14 @@ class DirectorServer {
 
     // MARK: - Content Management
 
-    func showContent(speechRecognizer: SpeechRecognizer, words: [String], totalCharCount: Int) {
+    func showContent(speechRecognizer: SpeechRecognizer, totalCharCount: Int) {
         self.speechRecognizer = speechRecognizer
-        self.words = words
         self.totalCharCount = totalCharCount
         self.contentActive = true
         startBroadcasting()
     }
 
-    func updateContent(words: [String], totalCharCount: Int) {
-        self.words = words
+    func updateContent(totalCharCount: Int) {
         self.totalCharCount = totalCharCount
     }
 
@@ -305,7 +305,6 @@ class DirectorServer {
         let isDone = totalCharCount > 0 && effective >= totalCharCount
 
         let state = DirectorState(
-            words: words,
             highlightedCharCount: effective,
             totalCharCount: totalCharCount,
             isActive: true,
@@ -321,7 +320,7 @@ class DirectorServer {
 
     private func broadcastInactive() {
         let state = DirectorState(
-            words: [], highlightedCharCount: 0, totalCharCount: 0,
+            highlightedCharCount: 0, totalCharCount: 0,
             isActive: false, isDone: false, isListening: false,
             fontColor: "#ffffff", cueColor: "#ffffff", lastSpokenText: "",
             audioLevels: []
