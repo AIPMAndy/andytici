@@ -84,7 +84,15 @@ class SpeechRecognizer {
     var error: String?
     var audioLevels: [CGFloat] = Array(repeating: 0, count: 30)
     var lastSpokenText: String = "" {
-        didSet { lastSpokenTextUtf16Count = lastSpokenText.utf16.count }
+        didSet {
+            // R56: also cache tail3/tail5 here so ASR partial handlers don't
+            // each re-split. didSet runs once per assignment (both call sites
+            // now only do `self.lastSpokenText = spoken` + matchCharacters).
+            lastSpokenTextUtf16Count = lastSpokenText.utf16.count
+            let words = lastSpokenText.split(separator: " ")
+            _lastSpokenTail3 = words.suffix(3).joined(separator: " ")
+            _lastSpokenTail5 = words.suffix(5).joined(separator: " ")
+        }
     }
     /// Cached UTF-16 length of lastSpokenText. Avoids O(N) walk on every ASR
     /// partial in matchCharacters' prefix-trim calculation.
@@ -620,9 +628,6 @@ class SpeechRecognizer {
                               self.recognitionGeneration == currentRecognitionGeneration else { return }
                         self.retryCount = 0 // Reset on success
                         self.lastSpokenText = spoken
-                        let spokenWords = spoken.split(separator: " ")
-                        self._lastSpokenTail3 = Self.tailWords(from: spokenWords, count: 3)
-                        self._lastSpokenTail5 = Self.tailWords(from: spokenWords, count: 5)
                         self.matchCharacters(spoken: spoken)
                     }
                 }
@@ -842,9 +847,6 @@ class SpeechRecognizer {
                           self.recognitionGeneration == currentRecognitionGeneration else { return }
                     self.retryCount = 0
                     self.lastSpokenText = spoken
-                    let spokenWords = spoken.split(separator: " ")
-                    self._lastSpokenTail3 = Self.tailWords(from: spokenWords, count: 3)
-                    self._lastSpokenTail5 = Self.tailWords(from: spokenWords, count: 5)
                     self.matchCharacters(spoken: spoken)
                 }
             }
@@ -1649,7 +1651,6 @@ class SpeechRecognizer {
         return dp[iCount]
     }
 
-    private static func tailWords(from words: [Substring], count: Int) -> String {
-        words.suffix(count).joined(separator: " ")
-    }
+    // tailWords helper removed in R56 — tail3/tail5 now computed in
+    // lastSpokenText.didSet so ASR partial handlers don't re-split.
 }
