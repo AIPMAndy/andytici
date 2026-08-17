@@ -180,7 +180,16 @@ class NotchOverlayController: NSObject {
     }
 
     private func screenUnderMouse() -> NSScreen? {
-        let mouseLocation = NSEvent.mouseLocation
+        screenUnderMouse(mouseLocation: NSEvent.mouseLocation)
+    }
+
+    // R59: callers that have already read NSEvent.mouseLocation pass the value
+    // through here so we don't trigger a second Cocoa mouseLocation lookup on
+    // the same tick. updateCursorPosition runs at 30Hz during cursor-follow;
+    // before this change it called NSEvent.mouseLocation twice per tick
+    // (once explicitly, once inside screenUnderMouse) and ran the
+    // NSScreen.screens.first(where:) scan twice as well.
+    private func screenUnderMouse(mouseLocation: NSPoint) -> NSScreen? {
         return NSScreen.screens.first(where: { NSMouseInRect(mouseLocation, $0.frame, false) })
     }
 
@@ -215,7 +224,10 @@ class NotchOverlayController: NSObject {
     private func updateCursorPosition() {
         guard let panel else { return }
         let mouse = NSEvent.mouseLocation
-        guard let screen = screenUnderMouse() ?? panel.screen ?? NSScreen.main else { return }
+        // R59: reuse the mouse location we just read instead of letting
+        // screenUnderMouse() trigger another NSEvent.mouseLocation call +
+        // NSScreen.screens scan on the same 30Hz tick.
+        guard let screen = screenUnderMouse(mouseLocation: mouse) ?? panel.screen ?? NSScreen.main else { return }
         let frame = cursorFollowingFrame(mouse: mouse, panelSize: panel.frame.size, screen: screen)
         panel.setFrame(frame, display: false)
     }
