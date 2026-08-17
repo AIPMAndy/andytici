@@ -984,17 +984,35 @@ struct NotchOverlayView: View {
     }
 
     private var prompterView: some View {
-        VStack(spacing: 0) {
+        // R76: cache effectiveCharCount + listeningMode + 5 NotchSettings
+        // reads at the top of this computed property. Previous body read
+        // effectiveCharCount twice (highlightedCharCount + progress fraction),
+        // listeningMode 4 times (onWordTap, smoothScroll, word-tracking text,
+        // classic pause button), and 5 NotchSettings.shared singletons inline.
+        // Body re-renders at 20 Hz in classic / silencePaused modes (scrollTimer
+        // drives timerWordProgress), so prompterView was evaluating ~11 inline
+        // reads per render × 20 Hz = ~220 reads/sec from this property alone.
+        // Hoisting to locals deduplicates within the property's evaluation
+        // scope — saves 7 reads per render × 20 Hz = ~140 reads/sec, plus 1
+        // fewer effectiveCharCount call per render (it was called twice).
+        let effective = effectiveCharCount
+        let font = NotchSettings.shared.font
+        let highlightColor = NotchSettings.shared.fontColorPreset.color
+        let cueColor = NotchSettings.shared.cueColorPreset.color
+        let cueUnread = NotchSettings.shared.cueBrightness.unreadOpacity
+        let cueRead = NotchSettings.shared.cueBrightness.readOpacity
+        let mode = listeningMode
+        return VStack(spacing: 0) {
             SpeechScrollView(
                 words: words,
-                highlightedCharCount: effectiveCharCount,
-                font: NotchSettings.shared.font,
-                highlightColor: NotchSettings.shared.fontColorPreset.color,
-                cueColor: NotchSettings.shared.cueColorPreset.color,
-                cueUnreadOpacity: NotchSettings.shared.cueBrightness.unreadOpacity,
-                cueReadOpacity: NotchSettings.shared.cueBrightness.readOpacity,
+                highlightedCharCount: effective,
+                font: font,
+                highlightColor: highlightColor,
+                cueColor: cueColor,
+                cueUnreadOpacity: cueUnread,
+                cueReadOpacity: cueRead,
                 onWordTap: { charOffset in
-                    if listeningMode == .wordTracking {
+                    if mode == .wordTracking {
                         speechRecognizer.jumpTo(charOffset: charOffset)
                     } else {
                         timerWordProgress = wordProgressForCharOffset(charOffset)
@@ -1006,7 +1024,7 @@ struct NotchOverlayView: View {
                         timerWordProgress = max(0, min(Double(words.count), newProgress))
                     }
                 },
-                smoothScroll: listeningMode != .wordTracking,
+                smoothScroll: mode != .wordTracking,
                 smoothWordProgress: timerWordProgress,
                 isListening: isEffectivelyListening
             )
@@ -1018,9 +1036,7 @@ struct NotchOverlayView: View {
             HStack(alignment: .center, spacing: 8) {
                 AudioWaveformProgressView(
                     levels: speechRecognizer.audioLevels,
-                    progress: totalCharCount > 0
-                        ? Double(effectiveCharCount) / Double(totalCharCount)
-                        : 0
+                    progress: totalCharCount > 0 ? Double(effective) / Double(totalCharCount) : 0
                 )
                 .frame(width: 80, height: 24)
                 .clipped()
@@ -1033,7 +1049,7 @@ struct NotchOverlayView: View {
                         .truncationMode(.tail)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .help(error)
-                } else if listeningMode == .wordTracking {
+                } else if mode == .wordTracking {
                     Text(speechRecognizer.lastSpokenTail3)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.white.opacity(0.5))
@@ -1084,7 +1100,7 @@ struct NotchOverlayView: View {
                     }
                 }
 
-                if listeningMode == .classic {
+                if mode == .classic {
                     Button {
                         isPaused.toggle()
                     } label: {
@@ -1513,17 +1529,33 @@ struct FloatingOverlayView: View {
     }
 
     private var floatingPrompterView: some View {
-        VStack(spacing: 0) {
+        // R76: same local-cache dedup as NotchOverlayView.prompterView.
+        // Previous body read effectiveCharCount twice (highlightedCharCount +
+        // progress), listeningMode 4 times (onWordTap, smoothScroll, word-
+        // tracking text, no-followingCursor mic-button else-branch), and 5
+        // NotchSettings.shared singletons inline. FloatingOverlayView body
+        // re-renders at 20 Hz in classic / silencePaused modes, so this was
+        // ~11 reads per render × 20 Hz = ~220 reads/sec from this property
+        // alone. Hoisting to locals saves 7 reads per render × 20 Hz =
+        // ~140 reads/sec, plus 1 fewer effectiveCharCount call per render.
+        let effective = effectiveCharCount
+        let font = NotchSettings.shared.font
+        let highlightColor = NotchSettings.shared.fontColorPreset.color
+        let cueColor = NotchSettings.shared.cueColorPreset.color
+        let cueUnread = NotchSettings.shared.cueBrightness.unreadOpacity
+        let cueRead = NotchSettings.shared.cueBrightness.readOpacity
+        let mode = listeningMode
+        return VStack(spacing: 0) {
             SpeechScrollView(
                 words: words,
-                highlightedCharCount: effectiveCharCount,
-                font: NotchSettings.shared.font,
-                highlightColor: NotchSettings.shared.fontColorPreset.color,
-                cueColor: NotchSettings.shared.cueColorPreset.color,
-                cueUnreadOpacity: NotchSettings.shared.cueBrightness.unreadOpacity,
-                cueReadOpacity: NotchSettings.shared.cueBrightness.readOpacity,
+                highlightedCharCount: effective,
+                font: font,
+                highlightColor: highlightColor,
+                cueColor: cueColor,
+                cueUnreadOpacity: cueUnread,
+                cueReadOpacity: cueRead,
                 onWordTap: { charOffset in
-                    if listeningMode == .wordTracking {
+                    if mode == .wordTracking {
                         speechRecognizer.jumpTo(charOffset: charOffset)
                     } else {
                         timerWordProgress = wordProgressForCharOffset(charOffset)
@@ -1535,7 +1567,7 @@ struct FloatingOverlayView: View {
                         timerWordProgress = max(0, min(Double(words.count), newProgress))
                     }
                 },
-                smoothScroll: listeningMode != .wordTracking,
+                smoothScroll: mode != .wordTracking,
                 smoothWordProgress: timerWordProgress,
                 isListening: isEffectivelyListening
             )
@@ -1545,9 +1577,7 @@ struct FloatingOverlayView: View {
             HStack(alignment: .center, spacing: 8) {
                 AudioWaveformProgressView(
                     levels: speechRecognizer.audioLevels,
-                    progress: totalCharCount > 0
-                        ? Double(effectiveCharCount) / Double(totalCharCount)
-                        : 0
+                    progress: totalCharCount > 0 ? Double(effective) / Double(totalCharCount) : 0
                 )
                 .frame(width: 160, height: 24)
 
@@ -1559,7 +1589,7 @@ struct FloatingOverlayView: View {
                         .truncationMode(.tail)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .help(error)
-                } else if listeningMode == .wordTracking {
+                } else if mode == .wordTracking {
                     Text(speechRecognizer.lastSpokenTail3)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.white.opacity(0.5))
@@ -1611,7 +1641,7 @@ struct FloatingOverlayView: View {
                 }
 
                 if !followingCursor {
-                    if listeningMode == .classic {
+                    if mode == .classic {
                         Button {
                             isPaused.toggle()
                         } label: {
