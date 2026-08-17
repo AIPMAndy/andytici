@@ -171,10 +171,23 @@ struct ExternalDisplayView: View {
     }
 
     var body: some View {
-        ZStack {
+        // R68: cache `effectiveCharCount` and `isDone` once per body render.
+        // The previous body read `isDone` three times (the `if` branch, the
+        // `.animation(value:)`, and the `.onChange(of:)`), and each `isDone`
+        // access re-runs `effectiveCharCount`, which switches on
+        // `listeningMode` and (for classic / silence-paused) walks the
+        // WordIndexTable via `charOffsetForWordProgress`. Body re-renders
+        // 20 Hz while scrollTimer drives `timerWordProgress`, so the original
+        // code was evaluating `effectiveCharCount` ~60 times/sec from body
+        // outer alone. The scrollTimer handler also read `isDone` (one more
+        // per tick) — now served by the same local. PrompterView still
+        // references `effectiveCharCount` directly, addressed separately.
+        let effective = effectiveCharCount
+        let done = totalCharCount > 0 && effective >= totalCharCount
+        return ZStack {
             Color.black.ignoresSafeArea()
 
-            if isDone && (listeningMode == .wordTracking || hasNextPage) {
+            if done && (listeningMode == .wordTracking || hasNextPage) {
                 doneView
             } else {
                 prompterView
@@ -188,9 +201,9 @@ struct ExternalDisplayView: View {
             }
         }
         .scaleEffect(x: mirrorAxis?.scaleX ?? 1, y: mirrorAxis?.scaleY ?? 1)
-        .animation(.easeInOut(duration: 0.5), value: isDone)
-        .onChange(of: isDone) { _, done in
-            if done && listeningMode == .wordTracking {
+        .animation(.easeInOut(duration: 0.5), value: done)
+        .onChange(of: done) { _, d in
+            if d && listeningMode == .wordTracking {
                 speechRecognizer.stop()
             }
         }
@@ -204,7 +217,8 @@ struct ExternalDisplayView: View {
             // -1 singleton read, -1 branch.
             let mode = listeningMode
             guard mode != .wordTracking else { return }
-            guard !isDone, !isUserScrolling else { return }
+            // R68: use cached `done` instead of recomputing `isDone` here.
+            guard !done, !isUserScrolling else { return }
             let speed = NotchSettings.shared.scrollSpeed // words per second
             switch mode {
             case .classic:
