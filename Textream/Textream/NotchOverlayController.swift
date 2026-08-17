@@ -1407,10 +1407,24 @@ struct FloatingOverlayView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        // R75: cache all NotchSettings.shared singletons + listeningMode +
+        // isDone at body outer. Mirrors R74 for the NotchOverlayView body.
+        // FloatingOverlayView body also re-renders at 20 Hz in classic /
+        // silence-paused modes (scrollTimer drives timerWordProgress). The
+        // body read NotchSettings.shared.showElapsedTime, floatingGlassEffect,
+        // glassOpacity, autoNextPage, scrollSpeed inline and listeningMode
+        // 4+ times per render. Hoisting saves 80+ singleton reads/sec.
+        let mode = listeningMode
+        let done = isDone
+        let speed = NotchSettings.shared.scrollSpeed
+        let showElapsed = NotchSettings.shared.showElapsedTime
+        let floatingGlass = NotchSettings.shared.floatingGlassEffect
+        let glassOpacity = NotchSettings.shared.glassOpacity
+        return VStack(spacing: 0) {
             if content.showPagePicker {
                 floatingPagePickerView
-            } else if isDone && (listeningMode == .wordTracking || hasNextPage) {
+            // R75: served from body-cached `done` and `mode`.
+            } else if done && (mode == .wordTracking || hasNextPage) {
                 floatingDoneView
             } else {
                 floatingPrompterView
@@ -1418,7 +1432,8 @@ struct FloatingOverlayView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .topTrailing) {
-            if NotchSettings.shared.showElapsedTime {
+            // R75: served from body-cached `showElapsed`.
+            if showElapsed {
                 ElapsedTimeView(fontSize: 11)
                     .padding(.top, 6)
                     .padding(.trailing, 10)
@@ -1426,11 +1441,12 @@ struct FloatingOverlayView: View {
         }
         .background(
             Group {
-                if NotchSettings.shared.floatingGlassEffect {
+                // R75: served from body-cached `floatingGlass` and `glassOpacity`.
+                if floatingGlass {
                     ZStack {
                         GlassEffectView()
                         RoundedRectangle(cornerRadius: 16)
-                            .fill(.black.opacity(NotchSettings.shared.glassOpacity))
+                            .fill(.black.opacity(glassOpacity))
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 16))
                 } else {
@@ -1454,14 +1470,15 @@ struct FloatingOverlayView: View {
                 }
             }
         }
-        .animation(.easeInOut(duration: 0.5), value: isDone)
-        .onChange(of: isDone) { _, done in
-            if done {
-                if listeningMode == .wordTracking {
+        .animation(.easeInOut(duration: 0.5), value: done)
+        // R75: served from body-cached `done`, `mode`, autoNext-via-line.
+        .onChange(of: isDone) { _, d in
+            if d {
+                if mode == .wordTracking {
                     speechRecognizer.stop()
                 }
                 if !hasNextPage {
-                    if listeningMode == .wordTracking {
+                    if mode == .wordTracking {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                             speechRecognizer.shouldDismiss = true
                         }
@@ -1473,10 +1490,11 @@ struct FloatingOverlayView: View {
                 cancelCountdown()
             }
         }
+        // R75: scrollTimer closure (20 Hz in active scroll modes) now
+        // captures `mode`, `done`, and `speed` from body outer.
         .onReceive(scrollTimer) { _ in
-            guard !isDone, !isUserScrolling else { return }
-            let speed = NotchSettings.shared.scrollSpeed // words per second
-            switch listeningMode {
+            guard !done, !isUserScrolling else { return }
+            switch mode {
             case .classic:
                 if !isPaused {
                     timerWordProgress += speed * 0.1
