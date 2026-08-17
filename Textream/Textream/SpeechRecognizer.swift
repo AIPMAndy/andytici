@@ -199,6 +199,18 @@ class SpeechRecognizer {
     /// ignores results for a short window so pre-jump speech isn't matched
     /// against the text at the new offset.
     private var lastJumpAt: Date = .distantPast
+    /// R62: STT recognizers frequently re-emit the latest partial verbatim.
+    /// When fullSpoken, matchStartOffset and spokenAnchorPrefix are unchanged
+    /// from the previous matchCharacters call, charLevelMatch and wordLevelMatch
+    /// produce identical results — cache them and skip the O(N·M) scan.
+    /// Cache invalidates automatically when any of the three keys differ
+    /// (jumpTo / updateText / start / resume / restart all reset matchStartOffset
+    /// and/or spokenAnchorPrefix).
+    private var prevMatchedFullSpoken: String = ""
+    private var prevMatchedStartOffset: Int = -1
+    private var prevMatchedAnchorPrefix: String = ""
+    private var prevMatchedCharResult: Int = 0
+    private var prevMatchedWordResult: Int = 0
 
     /// Update the source text while preserving the current recognized char count.
     /// Used by Director Mode to live-edit unread text without resetting read progress.
@@ -955,11 +967,35 @@ class SpeechRecognizer {
         }
         guard !spoken.isEmpty else { return }
 
-        // Strategy 1: character-level fuzzy match from the start offset
-        let charResult = charLevelMatch(spoken: spoken)
-
-        // Strategy 2: word-level match (handles STT word substitutions)
-        let wordResult = wordLevelMatch(spoken: spoken)
+        // R62: cache char/word match results when STT re-emits the same
+        // partial. The matchers are O(N·M) over remaining source length
+        // and spoken length — for a 10-minute script and a 5-word partial
+        // that's ~7.5k character comparisons + up to ~100 fuzzy match
+        // calls. STT recognizers routinely repeat the latest partial
+        // verbatim while waiting for the speaker; skipping the scan
+        // here drops the heavy work for those ticks entirely. Confidence
+        // gating, recognizedCharCount advancement, and recentMatchPositions
+        // still run so commit behavior is unchanged.
+        let isRepeat = !prevMatchedFullSpoken.isEmpty
+            && fullSpoken == prevMatchedFullSpoken
+            && matchStartOffset == prevMatchedStartOffset
+            && spokenAnchorPrefix == prevMatchedAnchorPrefix
+        let charResult: Int
+        let wordResult: Int
+        if isRepeat {
+            charResult = prevMatchedCharResult
+            wordResult = prevMatchedWordResult
+        } else {
+            // Strategy 1: character-level fuzzy match from the start offset
+            charResult = charLevelMatch(spoken: spoken)
+            // Strategy 2: word-level match (handles STT word substitutions)
+            wordResult = wordLevelMatch(spoken: spoken)
+            prevMatchedFullSpoken = fullSpoken
+            prevMatchedStartOffset = matchStartOffset
+            prevMatchedAnchorPrefix = spokenAnchorPrefix
+            prevMatchedCharResult = charResult
+            prevMatchedWordResult = wordResult
+        }
 
         // Combine the two strategies. When they agree, average; when they
         // disagree, prefer the further (word-level) match so fast reading can
