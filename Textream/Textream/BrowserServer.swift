@@ -18,7 +18,13 @@ struct BrowserState: Codable {
     // content actually changes (page switch, source edit, or a fresh client
     // connection). Browser JS keeps `cachedWords` and falls back to it
     // whenever `s.words === null`.
-    let words: [String]?
+    //
+    // R60: `var` instead of `let` so broadcast() can populate it after the
+    // cheap-signature early-return (the words-hash decision was previously
+    // computed BEFORE that early-return, paying for 2-3 hashValue reads
+    // + 5 multiplications per 10Hz tick even when the broadcast would be
+    // dropped anyway).
+    var words: [String]?
     let highlightedCharCount: Int
     let totalCharCount: Int
     // CGFloat (== Double on arm64) eliminates the per-tick
@@ -316,16 +322,8 @@ class BrowserServer {
 
         let highlightWords = mode == .wordTracking
 
-        // R42: include the (potentially large) words array only when the
-        // content actually changed since the last broadcast. Stable 10Hz
-        // ticks during ASR now send a slim payload without `words`; the
-        // browser keeps the previous array in a local cache.
-        let currentWordsHash = Self.wordsHash(words)
-        let includeWords = currentWordsHash != lastBroadcastWordsHash
-        lastBroadcastWordsHash = currentWordsHash
-
         let state = BrowserState(
-            words: includeWords ? words : nil,
+            words: nil, // R60: deferred — see broadcast(_:words:) for the include-words decision
             highlightedCharCount: effective,
             totalCharCount: totalCharCount,
             audioLevels: speechRecognizer?.audioLevels ?? [],
@@ -338,7 +336,7 @@ class BrowserServer {
             highlightWords: highlightWords,
             lastSpokenText: speechRecognizer?.lastSpokenText ?? ""
         )
-        broadcast(state)
+        broadcast(state, words: words)
     }
 
     private func broadcastInactive() {
@@ -358,7 +356,7 @@ class BrowserServer {
         broadcast(state)
     }
 
-    private func broadcast(_ state: BrowserState) {
+    private func broadcast(_ state: BrowserState, words: [String]? = nil) {
         guard !wsConnections.isEmpty else { return }
         // R40: cheap pre-encode dedup. Skip the encoder entirely when no
         // user-visible field changed since the last tick.
@@ -371,16 +369,29 @@ class BrowserServer {
         ) {
             return
         }
-        guard let data = try? jsonEncoder.encode(state) else { return }
+        // R60: resolve the include-words decision here (after the cheap-signature
+        // early-return) so a stable-tick broadcast doesn't pay for Self.wordsHash
+        // (2-3 cached hashValue reads + 5 multiplications per 10Hz tick). The
+        // browser still gets a slim payload without `words` on stable ticks
+        // because the hash matches and we leave state.words as nil.
+        var resolvedState = state
+        if let words, state.isActive {
+            let currentWordsHash = Self.wordsHash(words)
+            if currentWordsHash != lastBroadcastWordsHash {
+                lastBroadcastWordsHash = currentWordsHash
+                resolvedState.words = words
+            }
+        }
+        guard let data = try? jsonEncoder.encode(resolvedState) else { return }
         // Skip broadcast if state hasn't changed (R35)
         if let last = lastBroadcastState, last == data {
             // Even though the encoder produced identical bytes, refresh the
             // cheap signature so we don't repeat the encode next tick.
-            cacheSignature(state)
+            cacheSignature(resolvedState)
             return
         }
         lastBroadcastState = data
-        cacheSignature(state)
+        cacheSignature(resolvedState)
         let meta = NWProtocolWebSocket.Metadata(opcode: .text)
         let ctx = NWConnection.ContentContext(identifier: "ws", metadata: [meta])
         for conn in wsConnections {
