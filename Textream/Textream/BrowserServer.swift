@@ -865,14 +865,24 @@ class BrowserServer {
           // R55: spokenEl comes from the script-scope cache (see DOM refs
           // block above), no per-tick getElementById.
           if(hlWords&&s.lastSpokenText){
-            const tail=s.lastSpokenText.split(' ').slice(-5).join(' ');
-            if(tail!==prevSpoken||prevSpokenHl!==true){
+            // R61: gate split+slice+join behind a lastSpokenText-change
+            // check. The previous code recomputed the 5-word tail on every
+            // 10 Hz tick (split allocates Array, slice(-5) allocates Array,
+            // join allocates String) even when lastSpokenText hadn't
+            // changed — common in word-tracking mode where ASR partials
+            // come at ~1 Hz but render() runs at 10 Hz. For a 5-minute
+            // session that's ~3000 wasted allocations, dropped to 1 per
+            // partial (the cache check below).
+            if(s.lastSpokenText!==prevLastSpokenSrc){
+              const tail=s.lastSpokenText.split(' ').slice(-5).join(' ');
               spokenEl.textContent=tail;
               prevSpoken=tail;prevSpokenHl=true;
+              prevLastSpokenSrc=s.lastSpokenText;
             }
           } else if(prevSpoken!==''||prevSpokenHl!==false){
             spokenEl.textContent='';
             prevSpoken='';prevSpokenHl=false;
+            prevLastSpokenSrc='';
           }
 
           // Mic indicator
@@ -887,7 +897,10 @@ class BrowserServer {
 
         // R46: spoken-text cache so we can skip textContent writes when
         // s.lastSpokenText (or hlWords) didn't change this tick.
+        // R61: prevLastSpokenSrc caches the *input* string so render() can
+        // skip the split/slice/join on stable ticks (see tail block above).
         let prevSpoken='',prevSpokenHl=false;
+        let prevLastSpokenSrc='';
 
         connect();
         </script>
