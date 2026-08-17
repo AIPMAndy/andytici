@@ -57,6 +57,12 @@ class BrowserServer {
     // the 10Hz broadcast timer otherwise re-walks 0..<wholeWord every tick.
     // Rebuilt only when words array changes (showContent / updateContent). (R32)
     private var cachedCharOffsets: [Int] = [0]
+    // R58: per-word grapheme counts cached alongside the prefix sum. Without
+    // this, the fractional branch in charOffsetForWordProgress does
+    // `words[wholeWord].count` — an O(M) grapheme walk — twice per 10Hz
+    // broadcast tick (called from broadcastCurrentState). Rebuild together
+    // with cachedCharOffsets in rebuildCharOffsetCache.
+    private var cachedWordCharCounts: [Int] = []
     // Cached JSONEncoder: JSONEncoder() carries a small amount of internal
     // state and allocates per call. With 10Hz broadcasting, caching shaves
     // 10 encoder allocations per second on the main thread. (R33)
@@ -400,12 +406,20 @@ class BrowserServer {
         var offsets = [Int]()
         offsets.reserveCapacity(words.count + 1)
         offsets.append(0)
+        // R58: build per-word char count cache in the same pass so the
+        // fractional branch in charOffsetForWordProgress can skip the
+        // O(M) grapheme walk on every 10Hz tick.
+        var charCounts = [Int]()
+        charCounts.reserveCapacity(words.count)
         var acc = 0
         for word in words {
-            acc += word.count + 1
+            let n = word.count
+            charCounts.append(n)
+            acc += n + 1
             offsets.append(acc)
         }
         cachedCharOffsets = offsets
+        cachedWordCharCounts = charCounts
     }
 
     /// Convert fractional word progress into a char offset using the prefix-sum
@@ -417,7 +431,9 @@ class BrowserServer {
         let frac = progress - Double(wholeWord)
         var offset = cachedCharOffsets[wholeWord]
         if wholeWord < count {
-            offset += Int(Double(words[wholeWord].count) * frac)
+            // R58: O(1) read from cachedWordCharCounts instead of walking
+            // words[wholeWord].count (O(M) graphemes) on every 10Hz tick.
+            offset += Int(Double(cachedWordCharCounts[wholeWord]) * frac)
         }
         return min(offset, totalCharCount)
     }
