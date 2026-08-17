@@ -750,11 +750,16 @@ class BrowserServer {
             prevWordKey=wordKey;
           }
 
+          // R65: hoist `spans` + length out of both loops. `c.children` is the
+          // same HTMLCollection on both passes, and `length` is touched per
+          // iteration otherwise — both add a property read per word × per frame.
+          const spans=c.children;
+          const nSpans=spans.length;
+
           // Find the next-word index (first non-fully-lit non-annotation)
           let nextIdx=-1;
           if(hlWords){
-            const spans=c.children;
-            for(let i=0;i<spans.length;i++){
+            for(let i=0;i<nSpans;i++){
               const sp=spans[i];
               if(sp.a)continue;
               // R49: skip the min/max arithmetic. `litCount < lc` reduces to
@@ -768,17 +773,20 @@ class BrowserServer {
 
           // Color each word to match native WordFlowLayout
           scrollTgt=null;
-          const spans=c.children;
-          for(let i=0;i<spans.length;i++){
+          for(let i=0;i<nSpans;i++){
             const sp=spans[i];
-            const charOff=sp.s;
             const ann=sp.a;
             // R49: skip the min/max arithmetic for `litCount`. `isFullyLit`
-            // becomes a single comparison against the cached `ce`. `charsInto`
-            // is the only derived value still needed for `isCurrent`.
+            // becomes a single comparison against the cached `ce`.
             const isFullyLit=hcc>=sp.ce;
-            const charsInto=hcc-charOff;
-            const isCurrent=(i===nextIdx)||(charsInto>=0&&!isFullyLit&&!ann);
+            // R65: the previous `isCurrent` formula had a second clause
+            // `(charsInto>=0 && !isFullyLit && !ann)` that's provably
+            // unreachable. For i < nextIdx the word is fully lit → !isFullyLit
+            // is false. For i > nextIdx, sp.s[i] > sp.ce[nextIdx] > hcc so
+            // charsInto = hcc - sp.s[i] < 0. The only true case is
+            // `i === nextIdx`, so the second clause is dead code AND it
+            // forces an extra `hcc - sp.s` subtraction per word per frame.
+            const isCurrent=i===nextIdx;
 
             let color,underline=false;
 
@@ -849,16 +857,23 @@ class BrowserServer {
           // Waveform with progress coloring (matches native AudioWaveformProgressView)
           const wf=waveformEl,
                 lv=s.audioLevels||[],
+                // R65: hoist lv.length + the barCount-1 reciprocal out of
+                // the per-bar loop. lv.length was read every iteration to
+                // bounds-check `i<lv.length`; `i/(barCount-1)` was a
+                // division per bar per frame even though the divisor is
+                // constant within the frame.
+                lvLen=lv.length,
                 pct=s.totalCharCount>0?s.highlightedCharCount/s.totalCharCount:0;
-          while(wf.children.length<lv.length){
+          while(wf.children.length<lvLen){
             const b=document.createElement('div');b.className='wf';
             // R46: init style fingerprint cache on bars created mid-session.
             b._h='';b._bg='';
             wf.appendChild(b)}
-          const barCount=wf.children.length;
+          const barCount=wf.children.length,
+                invBarRange=barCount>1?1/(barCount-1):0;
           for(let i=0;i<barCount;i++){
-            const l=i<lv.length?lv[i]:0;
-            const barProgress=barCount>1?i/(barCount-1):0;
+            const l=i<lvLen?lv[i]:0;
+            const barProgress=i*invBarRange;
             const isLit=barProgress<=pct;
             // R46: skip the two style.* writes when (height, background)
             // haven't changed since the previous frame. For stable audio
