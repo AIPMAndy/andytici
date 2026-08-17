@@ -190,7 +190,13 @@ struct ExternalDisplayView: View {
             if done && (listeningMode == .wordTracking || hasNextPage) {
                 doneView
             } else {
-                prompterView
+                // R69: pass the body-cached `effective` (one effectiveCharCount
+                // evaluation per body render — see R68) instead of letting
+                // prompterView recompute it twice internally (once for
+                // highlightedCharCount, once for the waveform progress
+                // fraction). At 20 Hz body re-renders, that's 40 saved
+                // effectiveCharCount calls/sec.
+                prompterView(effective: effective)
             }
         }
         .overlay(alignment: .topTrailing) {
@@ -232,7 +238,7 @@ struct ExternalDisplayView: View {
         }
     }
 
-    private var prompterView: some View {
+    private func prompterView(effective: Int) -> some View {
         GeometryReader { geo in
             let fontSize = max(48, min(96, geo.size.width / 14))
             let hPad = max(40, geo.size.width * 0.08)
@@ -242,7 +248,9 @@ struct ExternalDisplayView: View {
 
                 SpeechScrollView(
                     words: words,
-                    highlightedCharCount: effectiveCharCount,
+                    // R69: served from the body-cached `effective` parameter
+                    // instead of re-evaluating effectiveCharCount here.
+                    highlightedCharCount: effective,
                     font: .systemFont(ofSize: fontSize, weight: .semibold),
                     highlightColor: NotchSettings.shared.fontColorPreset.color,
                     cueColor: NotchSettings.shared.cueColorPreset.color,
@@ -272,8 +280,9 @@ struct ExternalDisplayView: View {
                 HStack(alignment: .center, spacing: 16) {
                     AudioWaveformProgressView_Observer(
                         recognizer: speechRecognizer,
+                        // R69: served from the body-cached `effective` parameter.
                         progress: totalCharCount > 0
-                            ? Double(effectiveCharCount) / Double(totalCharCount)
+                            ? Double(effective) / Double(totalCharCount)
                             : 0
                     )
                     .frame(width: 240, height: 32)
