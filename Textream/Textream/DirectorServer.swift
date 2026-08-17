@@ -310,6 +310,13 @@ class DirectorServer {
     private func broadcastCurrentState() {
         guard contentActive, !wsConnections.isEmpty else { return }
 
+        // R77: cache singletons at the top of this 10 Hz function. Previously
+        // read fontColorPreset.cssColor + cueColorPreset.cssColor inline per
+        // tick (2 reads × 10 Hz = 20 reads/sec). Hoisting deduplicates within
+        // the function and keeps the body free of inline @Observable access.
+        let fontColor = NotchSettings.shared.fontColorPreset.cssColor
+        let cueColor = NotchSettings.shared.cueColorPreset.cssColor
+
         let charCount = speechRecognizer?.recognizedCharCount ?? 0
         let effective = min(charCount, totalCharCount)
         let isDone = totalCharCount > 0 && effective >= totalCharCount
@@ -320,8 +327,8 @@ class DirectorServer {
             isActive: true,
             isDone: isDone,
             isListening: speechRecognizer?.isListening ?? false,
-            fontColor: NotchSettings.shared.fontColorPreset.cssColor,
-            cueColor: NotchSettings.shared.cueColorPreset.cssColor,
+            fontColor: fontColor,
+            cueColor: cueColor,
             lastSpokenText: speechRecognizer?.lastSpokenText ?? "",
             audioLevels: speechRecognizer?.audioLevels ?? []
         )

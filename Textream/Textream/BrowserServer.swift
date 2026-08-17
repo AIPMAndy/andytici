@@ -281,8 +281,18 @@ class BrowserServer {
     private func broadcastCurrentState() {
         guard contentActive, !wsConnections.isEmpty else { return }
 
-        let charCount: Int
+        // R77: cache singletons at the top of this 10 Hz function. Previously
+        // read listeningMode once and fontColorPreset.cssColor + cueColorPreset
+        // .cssColor once each per tick (3 reads × 10 Hz = 30 reads/sec). The
+        // classic/silencePaused branches additionally read scrollSpeed (1 more
+        // per tick in active modes). Hoisting deduplicates within the function
+        // and keeps the function body free of inline @Observable access.
         let mode = NotchSettings.shared.listeningMode
+        let speed = NotchSettings.shared.scrollSpeed
+        let fontColor = NotchSettings.shared.fontColorPreset.cssColor
+        let cueColor = NotchSettings.shared.cueColorPreset.cssColor
+
+        let charCount: Int
         switch mode {
         case .wordTracking:
             // In word-tracking mode the script doesn't auto-scroll, so the
@@ -298,7 +308,7 @@ class BrowserServer {
             let offsetBefore = charOffsetForWordProgress(timerWordProgress)
             let scrollDone = totalCharCount > 0 && offsetBefore >= totalCharCount
             if !scrollDone {
-                timerWordProgress += NotchSettings.shared.scrollSpeed * 0.1
+                timerWordProgress += speed * 0.1
                 charCount = charOffsetForWordProgress(timerWordProgress)
             } else {
                 charCount = offsetBefore
@@ -307,7 +317,7 @@ class BrowserServer {
             let offsetBefore = charOffsetForWordProgress(timerWordProgress)
             let scrollDone = totalCharCount > 0 && offsetBefore >= totalCharCount
             if !scrollDone && speechRecognizer?.isListening == true && (speechRecognizer?.isSpeaking ?? false) {
-                timerWordProgress += NotchSettings.shared.scrollSpeed * 0.1
+                timerWordProgress += speed * 0.1
                 charCount = charOffsetForWordProgress(timerWordProgress)
             } else {
                 charCount = offsetBefore
@@ -329,8 +339,8 @@ class BrowserServer {
             audioLevels: speechRecognizer?.audioLevels ?? [],
             isListening: speechRecognizer?.isListening ?? false,
             isDone: isDone,
-            fontColor: NotchSettings.shared.fontColorPreset.cssColor,
-            cueColor: NotchSettings.shared.cueColorPreset.cssColor,
+            fontColor: fontColor,
+            cueColor: cueColor,
             hasNextPage: hasNextPage,
             isActive: true,
             highlightWords: highlightWords,
