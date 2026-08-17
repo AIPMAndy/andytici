@@ -822,11 +822,25 @@ class BrowserServer {
             }
           }
 
-          // Auto-scroll: keep active word centered
+          // Auto-scroll: keep active word centered.
+          // R64: scrollTgt changes only when the active word advances (every
+          // few frames at most). The previous code called
+          // scrollTgt.getBoundingClientRect() + prompterEl.getBoundingClientRect()
+          // on every 10Hz tick — both force a layout flush, which is the most
+          // expensive DOM operation in the browser. Cache the rect keyed on
+          // scrollTgt element identity; only re-measure when the active word
+          // changes (≈ once per word, not per frame). A user-initiated scroll
+          // invalidates the cache so manual scroll auto-recenters on the next
+          // tick.
           if(scrollTgt){
-            const p=prompterEl,
-                  r=scrollTgt.getBoundingClientRect(),
-                  pr=p.getBoundingClientRect(),
+            if(scrollTgt!==lastScrollTgtEl||!lastScrollTgtRect){
+              const pr=prompterEl.getBoundingClientRect();
+              const r=scrollTgt.getBoundingClientRect();
+              lastScrollTgtEl=scrollTgt;
+              lastScrollTgtRect=r;
+              lastPrompterRect=pr;
+            }
+            const r=lastScrollTgtRect,pr=lastPrompterRect,
                   mid=pr.top+pr.height*0.4;
             if(r.top>mid+40||r.bottom<pr.top)
               scrollTgt.scrollIntoView({behavior:'smooth',block:'center'});
@@ -901,6 +915,13 @@ class BrowserServer {
         // skip the split/slice/join on stable ticks (see tail block above).
         let prevSpoken='',prevSpokenHl=false;
         let prevLastSpokenSrc='';
+        // R64: scroll-target rect cache. scrollTgt is reassigned to the same
+        // span for many consecutive frames (the active word doesn't change
+        // every tick), so caching its getBoundingClientRect() avoids forcing
+        // a layout flush on every 10Hz frame. Invalidated on user scroll
+        // (below) so manual drag-to-scroll auto-recovers.
+        let lastScrollTgtEl=null,lastScrollTgtRect=null,lastPrompterRect=null;
+        prompterEl.addEventListener('scroll',()=>{lastScrollTgtRect=null});
 
         connect();
         </script>
