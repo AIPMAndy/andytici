@@ -666,15 +666,21 @@ class BrowserServer {
         /* ---- render ---- */
 
         function render(s){
-          const wEl=waitingEl,
-                mEl=mainEl,
-                dEl=doneEl;
-
-          if(!s.isActive){wEl.style.display='flex';mEl.style.display='none';
-            dEl.style.display='none';return}
-          if(s.isDone){wEl.style.display='none';mEl.style.display='none';
-            dEl.style.display='flex';return}
-          wEl.style.display='none';mEl.style.display='flex';dEl.style.display='none';
+          // R66: cache the three-way display mode (waiting/main/done) so we
+          // only write 3 inline `style.display` values on a transition, not
+          // on every 10 Hz tick. The previous code wrote all three every
+          // frame regardless of whether anything had changed — each write
+          // triggers style-invalidation in the browser (~30 invalidations/sec
+          // for the steady state where isActive=true and isDone=false).
+          // prevMode = -1 sentinel guarantees the first frame always writes.
+          const mode=!s.isActive?0:(s.isDone?1:2);
+          if(mode!==prevMode){
+            prevMode=mode;
+            waitingEl.style.display=mode===0?'flex':'none';
+            mainEl.style.display=mode===2?'flex':'none';
+            doneEl.style.display=mode===1?'flex':'none';
+          }
+          if(mode!==2)return;
 
           const c=textContainerEl,
                 // R42: server only ships the (potentially large) `words`
@@ -686,7 +692,13 @@ class BrowserServer {
                 // sent a null before any full state — shouldn't happen
                 // because `handleWSConnection` forces includeWords on the
                 // next tick.
-                words=(s.words!==null&&s.words!==undefined)?(cachedWords=s.words):cachedWords,
+                // R66: simpler null-check. `s.words` is either an array (truthy,
+                // including `[]`) or null (falsy after JSON.parse), so the
+                // ternary below collapses the original
+                // `s.words!==null&&s.words!==undefined` double-check + the
+                // `cachedWords` assignment into one expression — same
+                // semantics, ~2 ops lighter per 10Hz tick.
+                words=(s.words?(cachedWords=s.words):cachedWords),
                 fc=s.fontColor||'#ffffff',
                 cc=s.cueColor||fc,
                 rgb=parseColor(fc),
@@ -915,7 +927,17 @@ class BrowserServer {
           }
 
           // Mic indicator
-          micDotEl.classList.toggle('on',!!s.isListening);
+          // R66: cache isListening — the previous code called
+          // micDotEl.classList.toggle('on', !!s.isListening) every tick even
+          // when isListening hadn't changed. classList.toggle on a stable
+          // class still walks classList.contains + may call add/remove;
+          // guarding it behind a boolean cache drops it to once per actual
+          // listening transition (typically 2 transitions per session).
+          const listening=!!s.isListening;
+          if(listening!==prevMicOn){
+            prevMicOn=listening;
+            micDotEl.classList.toggle('on',listening);
+          }
         }
 
         // Init waveform bars (R46: cache per-bar style fingerprint so
@@ -930,6 +952,11 @@ class BrowserServer {
         // skip the split/slice/join on stable ticks (see tail block above).
         let prevSpoken='',prevSpokenHl=false;
         let prevLastSpokenSrc='';
+        // R66: prevMode sentinel (-1) is set the first time render() runs so
+        // the initial frame still writes the three style.display values. After
+        // that, transitions are the only thing that writes them — drops to
+        // ~0 style-invalidation events/sec on a steady session.
+        let prevMode=-1,prevMicOn=false;
         // R64: scroll-target rect cache. scrollTgt is reassigned to the same
         // span for many consecutive frames (the active word doesn't change
         // every tick), so caching its getBoundingClientRect() avoids forcing
