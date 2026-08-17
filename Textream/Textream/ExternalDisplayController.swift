@@ -184,10 +184,20 @@ struct ExternalDisplayView: View {
         // references `effectiveCharCount` directly, addressed separately.
         let effective = effectiveCharCount
         let done = totalCharCount > 0 && effective >= totalCharCount
+        // R70: cache `listeningMode` once. The previous body read it three
+        // times per render (the `if done && (...)` line, the .onChange
+        // closure, and the scrollTimer closure). `listeningMode` resolves
+        // to `NotchSettings.shared.listeningMode`, so each read goes through
+        // the @Observable singleton's access tracker. Hoisting to a local
+        // also lets the scrollTimer closure drop its own `let mode =
+        // listeningMode` line and use the body-captured value directly —
+        // closures capture enclosing scope. Net per body render: -2
+        // singleton reads.
+        let mode = listeningMode
         return ZStack {
             Color.black.ignoresSafeArea()
 
-            if done && (listeningMode == .wordTracking || hasNextPage) {
+            if done && (mode == .wordTracking || hasNextPage) {
                 doneView
             } else {
                 // R69: pass the body-cached `effective` (one effectiveCharCount
@@ -209,7 +219,7 @@ struct ExternalDisplayView: View {
         .scaleEffect(x: mirrorAxis?.scaleX ?? 1, y: mirrorAxis?.scaleY ?? 1)
         .animation(.easeInOut(duration: 0.5), value: done)
         .onChange(of: done) { _, d in
-            if d && listeningMode == .wordTracking {
+            if d && mode == .wordTracking {
                 speechRecognizer.stop()
             }
         }
@@ -221,7 +231,8 @@ struct ExternalDisplayView: View {
             // nested `if` in the .silencePaused branch to a `guard`,
             // removing one branch and one indent level. Net per tick:
             // -1 singleton read, -1 branch.
-            let mode = listeningMode
+            // R70: use the body-captured `mode` (single source of truth for
+            // this body render) instead of re-reading `listeningMode` here.
             guard mode != .wordTracking else { return }
             // R68: use cached `done` instead of recomputing `isDone` here.
             guard !done, !isUserScrolling else { return }
