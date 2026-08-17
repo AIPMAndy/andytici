@@ -606,15 +606,32 @@ class BrowserServer {
           return Math.max(1,n);
         }
 
+        /* ---- DOM refs (R55: cache once, render() reads via closure) ---- */
+        // render() runs at 10 Hz and previously called document.getElementById
+        // 8 times per tick (waiting/main/done/text-container/prompter/waveform
+        // /spoken/mic-dot). At 10 Hz that's ~80 DOM lookups/sec on the
+        // browser's main thread for elements that never change. Cache them
+        // once at script load so render() just reads the closure binding.
+        // WS event handlers (onopen/onclose) also reuse connStatus from here.
+        const connStatus=document.getElementById('conn-status'),
+              waitingEl=document.getElementById('waiting'),
+              mainEl=document.getElementById('main'),
+              doneEl=document.getElementById('done'),
+              textContainerEl=document.getElementById('text-container'),
+              prompterEl=document.getElementById('prompter'),
+              waveformEl=document.getElementById('waveform'),
+              spokenEl=document.getElementById('spoken'),
+              micDotEl=document.getElementById('mic-dot');
+
         /* ---- connection ---- */
 
         function connect(){
           ws=new WebSocket('ws://'+host+':'+WSP);
           ws.onopen=()=>{clearTimeout(rt);
-            document.getElementById('conn-status').textContent='Connected';};
+            connStatus.textContent='Connected';};
           ws.onmessage=e=>{try{render(JSON.parse(e.data))}catch(x){console.error(x)}};
           ws.onclose=()=>{
-            document.getElementById('conn-status').textContent='Reconnecting…';
+            connStatus.textContent='Reconnecting…';
             rt=setTimeout(connect,1500);};
           ws.onerror=()=>{ws.close()};
         }
@@ -622,9 +639,9 @@ class BrowserServer {
         /* ---- render ---- */
 
         function render(s){
-          const wEl=document.getElementById('waiting'),
-                mEl=document.getElementById('main'),
-                dEl=document.getElementById('done');
+          const wEl=waitingEl,
+                mEl=mainEl,
+                dEl=doneEl;
 
           if(!s.isActive){wEl.style.display='flex';mEl.style.display='none';
             dEl.style.display='none';return}
@@ -632,7 +649,7 @@ class BrowserServer {
             dEl.style.display='flex';return}
           wEl.style.display='none';mEl.style.display='flex';dEl.style.display='none';
 
-          const c=document.getElementById('text-container'),
+          const c=textContainerEl,
                 // R42: server only ships the (potentially large) `words`
                 // array when the content actually changes (page switch,
                 // source edit, fresh client connection). On every other
@@ -780,7 +797,7 @@ class BrowserServer {
 
           // Auto-scroll: keep active word centered
           if(scrollTgt){
-            const p=document.getElementById('prompter'),
+            const p=prompterEl,
                   r=scrollTgt.getBoundingClientRect(),
                   pr=p.getBoundingClientRect(),
                   mid=pr.top+pr.height*0.4;
@@ -789,7 +806,7 @@ class BrowserServer {
           }
 
           // Waveform with progress coloring (matches native AudioWaveformProgressView)
-          const wf=document.getElementById('waveform'),
+          const wf=waveformEl,
                 lv=s.audioLevels||[],
                 pct=s.totalCharCount>0?s.highlightedCharCount/s.totalCharCount:0;
           while(wf.children.length<lv.length){
@@ -818,13 +835,8 @@ class BrowserServer {
           }
 
           // Last spoken text (word-tracking mode only)
-          const spokenEl=document.getElementById('spoken');
-          // R46: skip the textContent write when neither the tail nor the
-          // visibility flag changed. Splits still run when s.lastSpokenText
-          // changes; on the many ticks where ASR hasn't updated it (most
-          // 10 Hz frames in steady speech) we now avoid the split +
-          // slice + join + textContent round-trip and the layout
-          // invalidation it triggers.
+          // R55: spokenEl comes from the script-scope cache (see DOM refs
+          // block above), no per-tick getElementById.
           if(hlWords&&s.lastSpokenText){
             const tail=s.lastSpokenText.split(' ').slice(-5).join(' ');
             if(tail!==prevSpoken||prevSpokenHl!==true){
@@ -837,12 +849,12 @@ class BrowserServer {
           }
 
           // Mic indicator
-          document.getElementById('mic-dot').classList.toggle('on',!!s.isListening);
+          micDotEl.classList.toggle('on',!!s.isListening);
         }
 
         // Init waveform bars (R46: cache per-bar style fingerprint so
         // render() can skip unchanged (height, background) writes).
-        const wfInit=document.getElementById('waveform');
+        const wfInit=waveformEl;
         for(let i=0;i<30;i++){const b=document.createElement('div');
           b.className='wf';b.style.height='2px';b._h='';b._bg='';wfInit.appendChild(b)}
 
