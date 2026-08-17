@@ -83,7 +83,16 @@ class SpeechRecognizer {
     var isStarting: Bool = false
     var error: String?
     var audioLevels: [CGFloat] = Array(repeating: 0, count: 30)
-    var lastSpokenText: String = ""
+    var lastSpokenText: String = "" {
+        didSet { lastSpokenTextUtf16Count = lastSpokenText.utf16.count }
+    }
+    /// Cached UTF-16 length of lastSpokenText. Avoids O(N) walk on every ASR
+    /// partial in matchCharacters' prefix-trim calculation.
+    private var lastSpokenTextUtf16Count: Int = 0
+    var lastSpokenTail3: String { _lastSpokenTail3 }
+    private var _lastSpokenTail3: String = ""
+    var lastSpokenTail5: String { _lastSpokenTail5 }
+    private var _lastSpokenTail5: String = ""
     var shouldDismiss: Bool = false
     var shouldAdvancePage: Bool = false
 
@@ -97,10 +106,61 @@ class SpeechRecognizer {
     private var recognitionTask: SFSpeechRecognitionTask?
     private var audioEngine = AVAudioEngine()
     private var sourceText: String = ""
-    private var normalizedSource: String = ""
+    /// Cached `sourceText.count` (Character count). Populated whenever
+    /// `sourceText` is assigned (R19). `String.count` is an O(N) Unicode
+    /// grapheme walk; this cache lets per-ASR-partial sites (`jumpTo`,
+    /// `matchSpokenText`) use an O(1) lookup. Grapheme count is the
+    /// semantically correct bound here because `WordItem.charOffset` is
+    /// built in `MarqueeTextView.buildItems` via `offset += word.count + 1`,
+    /// which is also grapheme-based.
+    private var sourceTextCharCount: Int = 0
     private var annotationRanges: [Range<Int>] = []
+    /// Monotonic cursor into `annotationRanges` used by advancePastAnnotations.
+    /// Reset to 0 whenever annotationRanges is rebuilt. (R26)
+    private var annotationCursor: Int = 0
     private var voiceActivityDetector = VoiceActivityDetector()
     private var matchStartOffset: Int = 0  // char offset to start matching from
+    /// Cached lowercase [Character] view of sourceText, kept in sync with edits.
+    /// charLevelMatch reuses this instead of rebuilding on every ASR partial.
+    private var cachedLowercasedSource: [Character] = []
+    /// Position up to which cachedLowercasedSource has been consumed by the
+    /// last charLevelMatch call. On the next call we only scan new characters.
+    private var charMatchCursor: Int = 0
+    /// Cached word-level [String] view of sourceText, kept in sync with edits.
+    private var cachedSourceWords: [String] = []
+    /// Pre-lowercased, letters/digits-only version of each cachedSourceWords
+    /// entry. Avoids per-partial Character.isLetter/isNumber work in the
+    /// word-level matcher's lookahead loops.
+    private var cachedSourceWordAlnum: [String] = []
+    /// Character counts of each cachedSourceWords entry (utf16 length — for
+    /// the BMP-heavy scripts STT returns this matches Character count exactly).
+    /// Pre-computed so the word-level matcher and isFuzzyMatch can skip the
+    /// O(N) grapheme walk that String.count performs on every access.
+    private var cachedSourceWordCharCount: [Int] = []
+    /// utf16 count of each cachedSourceWordAlnum entry — used by isFuzzyMatch
+    /// to short-circuit equal-length comparisons without re-walking the String.
+    private var cachedSourceWordAlnumUtf16Count: [Int] = []
+    /// utf16 code units for each cachedSourceWordAlnum entry. Pre-materialized
+    /// so the inner editDistance / isFuzzyMatch loop doesn't allocate a fresh
+    /// `[UInt16]` for the source side on every mismatch (R36 was the UInt16
+    /// conversion itself; R54 moves the source-side materialization off the
+    /// hot path by computing it once in rebuildMatchCache).
+    private var cachedSourceWordAlnumUtf16: [[UInt16]] = []
+    /// Char-offset table aligned with cachedSourceWords (each entry is the
+    /// starting char offset of that word in sourceText). Pre-computed once.
+    private var cachedWordOffsets: [Int] = []
+    /// Per-word annotation flag (true = word is inside a `[...]` block or is
+    /// punctuation-only and should be skipped by wordLevelMatch). Pre-computed
+    /// in rebuildMatchCache so the inner loop can do an O(1) array lookup
+    /// instead of running `(si..<sourceCount).contains(where:)` and
+    /// `Self.isAnnotationWord` (which allocates a temporary String via
+    /// `word.filter`) on every iteration. (R21)
+    private var cachedSourceWordIsAnnotation: [Bool] = []
+    /// Per-char annotation flag (true = char is inside any `[...]` block).
+    /// Pre-computed so charLevelMatch can do an O(1) array lookup instead of
+    /// `src[si...].firstIndex(of: "]")` (O(N) scan + ArraySlice allocation)
+    /// each time it encounters a `[`. (R21)
+    private var cachedCharIsInAnnotation: [Bool] = []
     private var retryCount: Int = 0
     private let maxRetries: Int = 10
     private var configurationChangeObserver: Any?
@@ -121,7 +181,12 @@ class SpeechRecognizer {
     /// the surviving common prefix avoids swallowing post-jump speech when
     /// the pre-jump portion changes length. Cleared whenever a new
     /// recognition task starts a fresh transcript.
-    private var spokenAnchorPrefix: String = ""
+    private var spokenAnchorPrefix: String = "" {
+        didSet { spokenAnchorPrefixUtf16Count = spokenAnchorPrefix.utf16.count }
+    }
+    /// Cached UTF-16 length of spokenAnchorPrefix. Avoids O(N) walk in
+    /// matchCharacters when computing the trim length after a manual jump.
+    private var spokenAnchorPrefixUtf16Count: Int = 0
     /// Results computed before a jump can be delivered after it; matching
     /// ignores results for a short window so pre-jump speech isn't matched
     /// against the text at the new offset.
@@ -133,12 +198,14 @@ class SpeechRecognizer {
         let words = splitTextIntoWords(text)
         let collapsed = words.joined(separator: " ")
         sourceText = collapsed
-        normalizedSource = Self.normalize(collapsed)
+        sourceTextCharCount = collapsed.count
         annotationRanges = SpeechTextAlignment.annotationRanges(in: collapsed)
+        annotationCursor = 0
         recognizedCharCount = min(preservingCharCount, collapsed.count)
         recognizedCharCount = advancePastAnnotations(from: recognizedCharCount)
         matchStartOffset = recognizedCharCount
         recentMatchPositions = []
+        rebuildMatchCache()
     }
 
     /// Jump highlight to a specific char offset (e.g. when user taps a word).
@@ -151,12 +218,13 @@ class SpeechRecognizer {
     /// tap would let a user keep a failing availability-retry loop alive
     /// forever.
     func jumpTo(charOffset: Int) {
-        let clampedOffset = max(0, min(charOffset, sourceText.count))
+        let clampedOffset = max(0, min(charOffset, sourceTextCharCount))
         let targetOffset = advancePastAnnotations(from: clampedOffset)
         let distance = abs(targetOffset - recognizedCharCount)
         recognizedCharCount = targetOffset
         matchStartOffset = targetOffset
         recentMatchPositions = []
+        rebuildMatchCache()
         if isListening && (distance > 500 || !audioEngine.isRunning) {
             // Far jump, or the engine died without a config-change callback —
             // fall back to a full restart (also refreshes contextualStrings).
@@ -175,12 +243,14 @@ class SpeechRecognizer {
         let words = splitTextIntoWords(text)
         let collapsed = words.joined(separator: " ")
         sourceText = collapsed
-        normalizedSource = Self.normalize(collapsed)
+        sourceTextCharCount = collapsed.count
         annotationRanges = SpeechTextAlignment.annotationRanges(in: collapsed)
+        annotationCursor = 0
         recognizedCharCount = advancePastAnnotations(from: 0)
         matchStartOffset = recognizedCharCount
         retryCount = 0
         recentMatchPositions = []
+        rebuildMatchCache()
         error = nil
         sessionGeneration &+= 1
         shouldListen = true
@@ -269,7 +339,18 @@ class SpeechRecognizer {
         sessionGeneration &+= 1
         isListening = false
         isStarting = false
+        _lastSpokenTail3 = ""
+        _lastSpokenTail5 = ""
         cleanupRecognition()
+    }
+
+    /// Clears the cached last-spoken-tail strings without touching any other
+    /// recognition state. Call when external code resets `lastSpokenText`
+    /// directly (e.g. on page change) so the overlay doesn't show stale text
+    /// until the next ASR partial arrives.
+    func resetSpokenTails() {
+        _lastSpokenTail3 = ""
+        _lastSpokenTail5 = ""
     }
 
     func forceStop() {
@@ -278,9 +359,13 @@ class SpeechRecognizer {
         isListening = false
         isStarting = false
         sourceText = ""
+        sourceTextCharCount = 0
         annotationRanges = []
+        annotationCursor = 0
         retryCount = maxRetries
         recentMatchPositions = []
+        _lastSpokenTail3 = ""
+        _lastSpokenTail5 = ""
         cleanupRecognition()
     }
 
@@ -291,6 +376,7 @@ class SpeechRecognizer {
         recognizedCharCount = advancePastAnnotations(from: recognizedCharCount)
         matchStartOffset = recognizedCharCount
         recentMatchPositions = []
+        rebuildMatchCache()
         shouldDismiss = false
         error = nil
         sessionGeneration &+= 1
@@ -331,6 +417,8 @@ class SpeechRecognizer {
         cleanupRecognitionTask()
         cleanupAudioEngine()
         voiceActivityDetector.reset()
+        _lastSpokenTail3 = ""
+        _lastSpokenTail5 = ""
     }
 
     /// Coalesces all delayed beginRecognition() calls into a single pending work item.
@@ -440,11 +528,12 @@ class SpeechRecognizer {
             recognitionRequest.shouldReportPartialResults = true
             recognitionRequest.taskHint = .dictation
 
-            // Add contextual strings from the source text to improve STT accuracy
-            let upcoming = String(sourceText.dropFirst(matchStartOffset))
-            let contextWords = upcoming.split(separator: " ")
-                .map { String($0).lowercased().filter { $0.isLetter || $0.isNumber } }
-                .filter { $0.count >= 5 }
+            // Build contextual strings from the cached lowercased source.
+            // Replaces `String(sourceText.dropFirst(...))` + split + lowercased
+            // + alnum-filter chain which allocated 1 whole-text String copy
+            // + N per-word `lowercased()` Strings + N per-word `filter` Strings
+            // for every ASR start/restart. (R31)
+            let contextWords = upcomingContextWords()
             // Andy题词: 合并口播常用词热词表，提升中文 ASR 准确率
             let uniqueContextWords = Array(Set(contextWords + KouboVocabulary.words).prefix(80))
             if !uniqueContextWords.isEmpty {
@@ -531,6 +620,9 @@ class SpeechRecognizer {
                               self.recognitionGeneration == currentRecognitionGeneration else { return }
                         self.retryCount = 0 // Reset on success
                         self.lastSpokenText = spoken
+                        let spokenWords = spoken.split(separator: " ")
+                        self._lastSpokenTail3 = Self.tailWords(from: spokenWords, count: 3)
+                        self._lastSpokenTail5 = Self.tailWords(from: spokenWords, count: 5)
                         self.matchCharacters(spoken: spoken)
                     }
                 }
@@ -617,9 +709,12 @@ class SpeechRecognizer {
     // MARK: - Thread-safe buffer appending
 
     private func recordAudioLevel(_ level: CGFloat) {
+        // Append then trim once when over capacity — O(1) amortized instead
+        // of O(N) removeFirst every call. SwiftUI will only observe the
+        // final mutation when the array actually grew.
         audioLevels.append(level)
         if audioLevels.count > 30 {
-            audioLevels.removeFirst()
+            audioLevels.removeFirst(audioLevels.count - 30)
         }
         voiceActivityDetector.process(level: level, at: ProcessInfo.processInfo.systemUptime)
     }
@@ -628,6 +723,44 @@ class SpeechRecognizer {
         requestLock.lock()
         recognitionRequest?.append(buffer)
         requestLock.unlock()
+    }
+
+    /// Build contextual strings from the upcoming portion of the source text
+    /// using the already-lowercased char cache. Mirrors the prior behavior
+    /// (`split(separator: " ")` + `lowercased()` + `filter(isLetter/isNumber)`
+    /// + `filter(count >= 5)`) without the per-word `lowercased()` alloc or
+    /// the `String(dropFirst(_:))` copy. Lookahead is capped to bound work on
+    /// huge scripts. (R31)
+    private func upcomingContextWords(lookaheadChars: Int = 1500) -> [String] {
+        let totalLen = cachedLowercasedSource.count
+        let startOffset = min(matchStartOffset, totalLen)
+        let endOffset = min(startOffset + lookaheadChars, totalLen)
+        var contextWords: [String] = []
+        contextWords.reserveCapacity(32)
+        var wordBuf = ""
+        wordBuf.reserveCapacity(16)
+        for i in startOffset..<endOffset {
+            let ch = cachedLowercasedSource[i]
+            // Original split on " " (space only); other whitespace and `\n`
+            // survived into the word then got dropped by the alnum filter.
+            // Mirror that here: only " " is a word boundary; everything
+            // non-alnum is dropped from the running buffer.
+            if ch == " " {
+                if wordBuf.count >= 5 {
+                    contextWords.append(wordBuf)
+                }
+                wordBuf.removeAll(keepingCapacity: true)
+                continue
+            }
+            if ch.isLetter || ch.isNumber {
+                wordBuf.append(ch)
+            }
+            // else: drop (\n, tabs, punctuation)
+        }
+        if wordBuf.count >= 5 {
+            contextWords.append(wordBuf)
+        }
+        return contextWords
     }
 
     // MARK: - Soft restart (task only, keeps audio engine running)
@@ -664,11 +797,8 @@ class SpeechRecognizer {
         newRequest.shouldReportPartialResults = true
         newRequest.taskHint = .dictation
 
-        // Add contextual strings for the remaining text
-        let upcoming = String(sourceText.dropFirst(matchStartOffset))
-        let contextWords = upcoming.split(separator: " ")
-            .map { String($0).lowercased().filter { $0.isLetter || $0.isNumber } }
-            .filter { $0.count >= 5 }
+        // Build contextual strings from the cached lowercased source. (R31)
+        let contextWords = upcomingContextWords()
         let uniqueWords = Array(Set(contextWords).prefix(50))
         if !uniqueWords.isEmpty {
             newRequest.contextualStrings = uniqueWords
@@ -712,6 +842,9 @@ class SpeechRecognizer {
                           self.recognitionGeneration == currentRecognitionGeneration else { return }
                     self.retryCount = 0
                     self.lastSpokenText = spoken
+                    let spokenWords = spoken.split(separator: " ")
+                    self._lastSpokenTail3 = Self.tailWords(from: spokenWords, count: 3)
+                    self._lastSpokenTail5 = Self.tailWords(from: spokenWords, count: 5)
                     self.matchCharacters(spoken: spoken)
                 }
             }
@@ -779,11 +912,44 @@ class SpeechRecognizer {
         // less than the anchor length minus a small slack — a revision very
         // early in the transcript would otherwise leak the whole pre-jump
         // transcript back into matching.
-        var spoken = fullSpoken
+        // Hold `spoken` as a Substring view into fullSpoken's storage instead of
+        // allocating a fresh String. `dropFirst` returns a Substring sharing
+        // fullSpoken's underlying buffer (COW), so per-ASR-partial we save:
+        // - 1 Substring → String wrap allocation
+        // - the Grapheme walk String.init(Substring) does internally
+        // Generic <S: StringProtocol> char/word level matchers accept the
+        // Substring directly. (R24)
+        let spoken: Substring
         if !spokenAnchorPrefix.isEmpty {
-            let common = zip(spokenAnchorPrefix, fullSpoken).prefix(while: { $0 == $1 }).count
-            let trimLen = min(fullSpoken.count, max(common, spokenAnchorPrefix.count - 24))
-            spoken = String(fullSpoken.dropFirst(trimLen))
+            // Manual utf16 iterator walk for the common-prefix count.
+            // Replaces `zip(spokenAnchorPrefix, fullSpoken).prefix(while:
+            // { $0 == $1 }).count` which built a Zip2 + PrefixSequence +
+            // closure-capture, and each Character equality checks Unicode
+            // grapheme normalization. Both sides are STT plain text — utf16
+            // unit comparison is correct and ~10× cheaper per char. (R28)
+            let aU16 = spokenAnchorPrefix.utf16
+            let bU16 = fullSpoken.utf16
+            let limit = min(spokenAnchorPrefixUtf16Count, fullSpoken.utf16.count)
+            var ai = aU16.startIndex
+            var bi = bU16.startIndex
+            var common = 0
+            while common < limit, aU16[ai] == bU16[bi] {
+                ai = aU16.index(after: ai)
+                bi = bU16.index(after: bi)
+                common += 1
+            }
+            // Use cached utf16 counts (set via didSet on lastSpokenText /
+            // spokenAnchorPrefix) to avoid O(N) String.count walks per ASR
+            // partial. utf16.count and Swift's String.count only diverge
+            // when the text contains surrogate-pair grapheme clusters
+            // (e.g. emoji) — STT output is plain text in practice.
+            let trimLen = min(lastSpokenTextUtf16Count, max(common, spokenAnchorPrefixUtf16Count - 24))
+            // dropFirst traps if trimLen > fullSpoken.utf16.count; guard
+            // with the cheap utf16 count (O(1), no grapheme walk).
+            if trimLen >= fullSpoken.utf16.count { return }
+            spoken = fullSpoken.dropFirst(trimLen)
+        } else {
+            spoken = Substring(fullSpoken)
         }
         guard !spoken.isEmpty else { return }
 
@@ -798,7 +964,7 @@ class SpeechRecognizer {
         // catch up instead of being dragged back by the brittle character scan.
         let best = SpeechTextAlignment.bestOffset(characterResult: charResult, wordResult: wordResult)
 
-        let rawCandidate = min(matchStartOffset + best, sourceText.count)
+        let rawCandidate = min(matchStartOffset + best, sourceTextCharCount)
         let candidate = advancePastAnnotations(from: rawCandidate)
         guard candidate > recognizedCharCount else { return }
 
@@ -838,29 +1004,219 @@ class SpeechRecognizer {
 
     private func advancePastAnnotations(from offset: Int) -> Int {
         SpeechTextAlignment.advancePastAnnotations(
-            in: sourceText,
+            in: cachedLowercasedSource,
             ranges: annotationRanges,
-            from: offset
+            from: offset,
+            cursor: &annotationCursor
         )
     }
 
-    private func charLevelMatch(spoken: String) -> Int {
-        let remainingSource = String(sourceText.dropFirst(matchStartOffset))
-        // Use Character arrays (not unicodeScalars) so counts match sourceText.count
-        let src = Array(remainingSource.lowercased())
-        let spk = Array(Self.normalize(spoken))
+    /// Refresh the per-source cached views used by char/word level matchers.
+/// Called whenever sourceText changes or after a manual jump.
+    private func rebuildMatchCache() {
+        // Note: use cachedLowercasedSource (Character array) for offset/character
+        // checks — Swift String does not allow Int subscripting and going via
+        // String.Index would allocate per call. Character-count == lowercased
+        // length because lowercased() preserves length for all script we
+        // process (Latin, CJK).
+        let lower = sourceText.lowercased()
+        cachedLowercasedSource = Array(lower)
+        let split = sourceText.split(omittingEmptySubsequences: true, whereSeparator: { $0.isWhitespace })
+        cachedSourceWords = split.map { String($0) }
+        // Pre-compute lowercased+letters/digits-only versions of each source
+        // word. wordLevelMatch previously called .lowercased().filter {...}
+        // per word per ASR partial — Character.isLetter/isNumber is slow
+        // because of Unicode property lookups.
+        cachedSourceWordAlnum = cachedSourceWords.map { word in
+            var out = ""
+            out.reserveCapacity(word.count)
+            for ch in word.lowercased() where ch.isLetter || ch.isNumber {
+                out.append(ch)
+            }
+            return out
+        }
+        // Pre-compute Character counts once so wordLevelMatch and isFuzzyMatch
+        // can avoid the O(N) grapheme walk that String.count performs.
+        // utf16.count is O(1) and matches Character.count for all BMP scripts.
+        cachedSourceWordCharCount = cachedSourceWords.map { $0.utf16.count }
+        cachedSourceWordAlnumUtf16Count = cachedSourceWordAlnum.map { $0.utf16.count }
+        // R54: pre-materialize each alnum word into a [UInt16] once. Lets
+        // editDistance skip the per-call `Array(srcWord.utf16)` allocation
+        // (and the matching grapheme → utf16 code-unit walk) on the source
+        // side, where the word is invariant across ASR partials. Spoken-
+        // side words still allocate — they're freshly built per partial.
+        cachedSourceWordAlnumUtf16 = cachedSourceWordAlnum.map { Array($0.utf16) }
+        let lowerChars = cachedLowercasedSource
+        var offsets = [Int](repeating: 0, count: cachedSourceWords.count)
+        var cursor = 0
+        let total = lowerChars.count
+        for (i, w) in cachedSourceWords.enumerated() {
+            // Account for collapsed whitespace between words — find first
+            // non-whitespace starting at `cursor`.
+            while cursor < total, lowerChars[cursor].isWhitespace {
+                cursor += 1
+            }
+            offsets[i] = cursor
+            cursor += w.count
+            // skip any remaining whitespace inside collapsed sequence (defensive)
+            while cursor < total, lowerChars[cursor].isWhitespace {
+                cursor += 1
+            }
+        }
+        cachedWordOffsets = offsets
+        charMatchCursor = matchStartOffset
 
-        var si = 0
+        // R21: pre-compute per-word annotation flag and per-char annotation
+        // mask so the hot matchers don't have to do O(N) bracket scans or
+        // O(W) `word.filter` allocations per ASR partial. See comments on
+        // the property declarations for the rationale.
+        var wordMask = [Bool](repeating: false, count: cachedSourceWords.count)
+        // Pass 1: any `]` anywhere? If not, no `[...]` blocks exist and we
+        // can skip the inside-annotation scan entirely.
+        var anyClosingBracket = false
+        for word in cachedSourceWords where word.contains("]") {
+            anyClosingBracket = true
+            break
+        }
+        if anyClosingBracket {
+            var inside = false
+            for (i, word) in cachedSourceWords.enumerated() {
+                if word.hasPrefix("[") {
+                    inside = true
+                }
+                if inside {
+                    wordMask[i] = true
+                }
+                if word.contains("]") {
+                    inside = false
+                }
+            }
+        }
+        // Pass 2: punctuation-only words (matches isAnnotationWord's second
+        // condition). For words already inside an annotation block, this is
+        // redundant; for everything else, it catches `...`, `!!!`, orphan
+        // `]`, etc. that contribute no alnum chars.
+        for (i, word) in cachedSourceWords.enumerated() where !wordMask[i] {
+            if word.hasPrefix("[") && word.hasSuffix("]") {
+                wordMask[i] = true
+                continue
+            }
+            var hasAlnum = false
+            for ch in word where ch.isLetter || ch.isNumber {
+                hasAlnum = true
+                break
+            }
+            if !hasAlnum {
+                wordMask[i] = true
+            }
+        }
+        cachedSourceWordIsAnnotation = wordMask
+
+        // Char-level mask: mark every character that's inside a `[...]` block.
+        // We scan cachedLowercasedSource directly (guaranteed to be the same
+        // length / same indexing as the cache the matcher reads) and stamp
+        // `true` for the chars between matching brackets.
+        var charMask = [Bool](repeating: false, count: lowerChars.count)
+        var openingIndex: Int? = nil
+        for (i, ch) in lowerChars.enumerated() {
+            if ch == "[", openingIndex == nil {
+                openingIndex = i
+            } else if ch == "]", let start = openingIndex {
+                for j in start..<(i + 1) {
+                    charMask[j] = true
+                }
+                openingIndex = nil
+            }
+        }
+        cachedCharIsInAnnotation = charMask
+    }
+
+    /// Find the first cachedSourceWords index whose starting offset >= target.
+    /// Caller must clamp target to sourceText.count.
+    private func wordIndexAtCharOffset(_ target: Int) -> Int {
+        // cachedWordOffsets is monotonically non-decreasing; binary search.
+        var lo = 0, hi = cachedWordOffsets.count
+        while lo < hi {
+            let mid = (lo + hi) >> 1
+            if cachedWordOffsets[mid] < target {
+                lo = mid + 1
+            } else {
+                hi = mid
+            }
+        }
+        return min(lo, max(0, cachedWordOffsets.count - 1))
+    }
+
+    private func charLevelMatch<S: StringProtocol>(spoken: S) -> Int {
+        // Use the cached Character array's count (O(1)) instead of sourceText.count
+        // (O(N) grapheme walk). The cache is rebuilt only when sourceText changes.
+        let totalLen = cachedLowercasedSource.count
+        let src = cachedLowercasedSource
+
+        // Single-pass lowercase + alnum/whitespace filter into [Character].
+        // Replaces `Array(Self.normalize(spoken))` which allocated 2 Strings
+        // (one from `lowercased()`, one from `.filter`) and walked the
+        // grapheme 3 times per ASR partial. `Self.normalize` still exists
+        // for the 2 cold callsites in updateText/start. ASCII fast path
+        // mirrors wordLevelMatch's lowercasing branch. (R22)
+        var spk: [Character] = []
+        spk.reserveCapacity(spoken.utf16.count)
+        for ch in spoken {
+            if ch.isASCII {
+                let v = ch.unicodeScalars.first!.value
+                if v >= 65 && v <= 90 {
+                    spk.append(Character(UnicodeScalar(v + 32)!))
+                } else if (v >= 97 && v <= 122) || (v >= 48 && v <= 57)
+                    || v == 32 || v == 9 || v == 10 || v == 13 {
+                    spk.append(ch)
+                }
+                // else: ASCII punctuation -> drop
+            } else {
+                // Non-ASCII alnum/whitespace. Character.lowercased() returns
+                // a String (grapheme length may change, e.g. ligatures); its
+                // first Character is what the original normalize kept.
+                let lowerStr = ch.lowercased()
+                guard let lowerCh = lowerStr.first else { continue }
+                if lowerCh.isLetter || lowerCh.isNumber || lowerCh.isWhitespace {
+                    spk.append(lowerCh)
+                }
+            }
+        }
+
+        // Anchor positions:
+        //   si = position in source we're currently matching at
+        //   ri = position in spoken we've consumed up to
+        var si = matchStartOffset
         var ri = 0
-        var lastGoodOrigIndex = 0
+        var lastGoodOrigIndex = si
 
-        while si < src.count && ri < spk.count {
+        // Anchor in spoken at the surviving prefix. We approximate by skipping
+        // any leading non-alnum noise, then assuming the next alnum char aligns
+        // with si. This matches the prior behavior of starting from
+        // matchStartOffset against a freshly built remainingSource.
+        while ri < spk.count, !spk[ri].isLetter, !spk[ri].isNumber {
+            ri += 1
+        }
+
+        // If we've already advanced past previously seen text, fast-forward si
+        // past any leading non-alnum in source (mirrors old behavior).
+        // Annotation chars are skipped via the per-char mask (R21) — the old
+        // `src[si...].firstIndex(of: "]")` scan was O(N) per `[`.
+        while si < totalLen, !src[si].isLetter, !src[si].isNumber, !cachedCharIsInAnnotation[si] {
+            si += 1
+        }
+
+        let matchStart = si
+
+        while si < totalLen && ri < spk.count {
             let sc = src[si]
             let rc = spk[ri]
 
-            if sc == "[",
-               let closingIndex = src[si...].firstIndex(of: "]") {
-                si = closingIndex + 1
+            // Skip annotation chars via pre-computed mask (R21). Replaces the
+            // old `src[si...].firstIndex(of: "]")` O(N) scan + ArraySlice
+            // alloc per bracket encounter.
+            if cachedCharIsInAnnotation[si] {
+                si += 1
                 lastGoodOrigIndex = si
                 continue
             }
@@ -901,11 +1257,11 @@ class SpeechRecognizer {
 
                 // Skip up to 5 chars in source (STT missed some chars, or
                 // fast reading outran the scan)
-                let maxSkipS = min(5, src.count - si - 1)
+                let maxSkipS = min(5, totalLen - si - 1)
                 if maxSkipS >= 1 {
                     for skipS in 1...maxSkipS {
                         let nextSI = si + skipS
-                        if nextSI < src.count && src[nextSI] == rc {
+                        if nextSI < totalLen && src[nextSI] == rc {
                             si = nextSI
                             found = true
                             break
@@ -921,10 +1277,9 @@ class SpeechRecognizer {
             }
         }
 
-        while si < src.count {
-            if src[si] == "[",
-               let closingIndex = src[si...].firstIndex(of: "]") {
-                si = closingIndex + 1
+        while si < totalLen {
+            if cachedCharIsInAnnotation[si] {
+                si += 1
                 lastGoodOrigIndex = si
             } else if !src[si].isLetter && !src[si].isNumber {
                 si += 1
@@ -934,93 +1289,169 @@ class SpeechRecognizer {
             }
         }
 
+        charMatchCursor = matchStart  // remember where this scan started
         return lastGoodOrigIndex
     }
 
-    private static func isAnnotationWord(_ word: String) -> Bool {
-        if word.hasPrefix("[") && word.hasSuffix("]") { return true }
-        let stripped = word.filter { $0.isLetter || $0.isNumber }
-        return stripped.isEmpty
-    }
+    private func wordLevelMatch<S: StringProtocol>(spoken: S) -> Int {
+        // Reuse the cached word view; start from the first word whose
+        // starting char-offset is >= matchStartOffset.
+        guard !cachedSourceWords.isEmpty else { return 0 }
+        let startIdx = wordIndexAtCharOffset(matchStartOffset)
+        // Work with absolute indices into the cached arrays instead of copying
+        // the suffix into fresh arrays on every call.
+        let sourceCount = cachedSourceWords.count
+        // Fold splitTextIntoWords + lowercased + alnum-filter into a single
+        // per-character walk. Replaces the previous chain
+        // `splitTextIntoWords(spoken).map { ... }` which allocated: 1
+        // replacingOccurrences String, 1 [Substring] array, N Substring
+        // slices, N String(Substring) inits, N per-word `out = ""` Strings,
+        // plus a separate `[Int].map { $0.utf16.count }` for length
+        // parallel array. New path: 1 [String] + 1 [Int] reserved once,
+        // 1 reused buffer between words. Behavior preserved:
+        // - whitespace splits (incl. '\n' → separator)
+        // - CJK chars become individual words (matches splitTextIntoWords)
+        // - ASCII A-Z lowercased in place
+        // - non-alnum dropped per char. (R23)
+        var spokenAlnumWords: [String] = []
+        var spokenAlnumUtf16Counts: [Int] = []
+        spokenAlnumWords.reserveCapacity(32)
+        spokenAlnumUtf16Counts.reserveCapacity(32)
+        var wordBuf = ""
+        wordBuf.reserveCapacity(16)
+        for ch in spoken {
+            if ch.isWhitespace || ch == "\n" {
+                if !wordBuf.isEmpty {
+                    spokenAlnumUtf16Counts.append(wordBuf.utf16.count)
+                    spokenAlnumWords.append(wordBuf)
+                    wordBuf = ""
+                    wordBuf.reserveCapacity(16)
+                }
+                continue
+            }
+            if ch.isASCII {
+                let v = ch.unicodeScalars.first!.value
+                if v >= 65 && v <= 90 {
+                    wordBuf.append(Character(UnicodeScalar(v + 32)!))
+                } else if (v >= 97 && v <= 122) || (v >= 48 && v <= 57) {
+                    wordBuf.append(ch)
+                }
+                // else: ASCII punctuation → drop
+                continue
+            }
+            // Non-ASCII: split CJK chars as individual words (matches the
+            // CJK branch in MarqueeTextView.splitTextIntoWords). Other
+            // non-ASCII alnum (accented Latin etc.) joins the buffer.
+            let firstScalar = ch.unicodeScalars.first
+            let isCJK = firstScalar.map { $0.isCJK } ?? false
+            if isCJK {
+                if !wordBuf.isEmpty {
+                    spokenAlnumUtf16Counts.append(wordBuf.utf16.count)
+                    spokenAlnumWords.append(wordBuf)
+                    wordBuf = ""
+                    wordBuf.reserveCapacity(16)
+                }
+                if ch.isLetter || ch.isNumber {
+                    spokenAlnumUtf16Counts.append(ch.utf16.count)
+                    spokenAlnumWords.append(String(ch))
+                }
+            } else if ch.isLetter || ch.isNumber {
+                let lower = ch.lowercased()
+                if let c = lower.first {
+                    wordBuf.append(c)
+                }
+            }
+            // else: non-ASCII punctuation → drop
+        }
+        if !wordBuf.isEmpty {
+            spokenAlnumUtf16Counts.append(wordBuf.utf16.count)
+            spokenAlnumWords.append(wordBuf)
+        }
+        let spokenAlnumCount = spokenAlnumWords.count
 
-    private func wordLevelMatch(spoken: String) -> Int {
-        let remainingSource = String(sourceText.dropFirst(matchStartOffset))
-        let sourceWords = remainingSource.split(separator: " ").map { String($0) }
-        let spokenWords = splitTextIntoWords(spoken.lowercased())
-
-        var si = 0 // source word index
+        var si = startIdx // absolute source word index into cachedSourceWords
         var ri = 0 // spoken word index
-        var matchedCharCount = 0
-        var isInsideAnnotation = false
+        var matchedCharCount = cachedWordOffsets[startIdx]
+        // `isInsideAnnotation` is no longer needed at runtime — R21 pre-computes
+        // the per-word annotation flag in cachedSourceWordIsAnnotation so the
+        // hot loop is a single array lookup.
 
-        while si < sourceWords.count && ri < spokenWords.count {
-            // Auto-skip annotation words in source (brackets, emoji)
-            let beginsAnnotation = sourceWords[si].hasPrefix("[")
-                && sourceWords[si...].contains(where: { $0.contains("]") })
-            let skipsAnnotation = isInsideAnnotation || beginsAnnotation || Self.isAnnotationWord(sourceWords[si])
-            if skipsAnnotation {
-                if beginsAnnotation {
-                    isInsideAnnotation = true
-                }
-                if sourceWords[si].contains("]") {
-                    isInsideAnnotation = false
-                }
-                matchedCharCount += sourceWords[si].count
-                if si < sourceWords.count - 1 { matchedCharCount += 1 }
+        // Anchor spoken at the prefix that's already matched.
+        // splitTextIntoWords collapses whitespace; we don't know exactly which
+        // spoken words correspond to source words[0..<startIdx], so we let
+        // matching begin at the first remaining source word.
+
+        while si < sourceCount && ri < spokenAlnumCount {
+            // Auto-skip annotation words in source (brackets, emoji,
+            // punctuation-only). Pre-computed in rebuildMatchCache — O(1)
+            // array lookup replaces the old (si..<sourceCount).contains(where:)
+            // O(N) scan and `Self.isAnnotationWord`'s `word.filter` allocation.
+            if cachedSourceWordIsAnnotation[si] {
+                matchedCharCount += cachedSourceWordCharCount[si]
+                if si < sourceCount - 1 { matchedCharCount += 1 }
                 si += 1
                 continue
             }
 
-            let srcWord = sourceWords[si].lowercased()
-                .filter { $0.isLetter || $0.isNumber }
-            let spkWord = spokenWords[ri]
-                .filter { $0.isLetter || $0.isNumber }
+            let srcWord = cachedSourceWordAlnum[si]
+            // R54: src-side utf16 length now lives inside cachedSourceWordAlnumUtf16
+            // (looked up by isFuzzyMatchCachedSrc), so this local is unused —
+            // but we keep `srcWord` for the cheap `==` short-circuit above.
+            let spkWord = spokenAlnumWords[ri]
+            let spkWordCount = spokenAlnumUtf16Counts[ri]
 
-            if srcWord == spkWord || isFuzzyMatch(srcWord, spkWord) {
+            if srcWord == spkWord || isFuzzyMatchCachedSrc(srcIndex: si, b: spkWord, bCount: spkWordCount) {
                 // Count original chars including trailing punctuation
-                matchedCharCount += sourceWords[si].count
+                matchedCharCount += cachedSourceWordCharCount[si]
                 si += 1
                 ri += 1
                 // Add space separator only if there's a following word
-                if si < sourceWords.count {
+                if si < sourceCount {
                     matchedCharCount += 1
                 }
             } else {
                 // Try skipping up to 5 spoken words (STT hallucinated words,
                 // or fast reading produced a burst)
                 var foundSpk = false
-                let maxSpkSkip = min(5, spokenWords.count - ri - 1)
-                for skip in 1...max(1, maxSpkSkip) where skip <= maxSpkSkip {
-                    let nextSpk = spokenWords[ri + skip].filter { $0.isLetter || $0.isNumber }
-                    if srcWord == nextSpk || isFuzzyMatch(srcWord, nextSpk) {
-                        ri += skip
-                        foundSpk = true
-                        break
+                let maxSpkSkip = min(5, spokenAlnumCount - ri - 1)
+                if maxSpkSkip >= 1 {
+                    for skip in 1...maxSpkSkip {
+                        let nextSpk = spokenAlnumWords[ri + skip]
+                        let nextSpkCount = spokenAlnumUtf16Counts[ri + skip]
+                        if srcWord == nextSpk || isFuzzyMatchCachedSrc(srcIndex: si, b: nextSpk, bCount: nextSpkCount) {
+                            ri += skip
+                            foundSpk = true
+                            break
+                        }
                     }
                 }
                 if foundSpk { continue }
 
                 // Try skipping up to 5 source words (user read fast, STT missed words)
                 var foundSrc = false
-                let maxSrcSkip = min(5, sourceWords.count - si - 1)
-                for skip in 1...max(1, maxSrcSkip) where skip <= maxSrcSkip {
-                    let nextSrc = sourceWords[si + skip].lowercased().filter { $0.isLetter || $0.isNumber }
-                    if nextSrc == spkWord || isFuzzyMatch(nextSrc, spkWord) {
-                        // Add all skipped source words' char counts
-                        for s in 0..<skip {
-                            matchedCharCount += sourceWords[si + s].count + 1
+                let maxSrcSkip = min(5, sourceCount - si - 1)
+                if maxSrcSkip >= 1 {
+                    for skip in 1...maxSrcSkip {
+                        let nextSrc = cachedSourceWordAlnum[si + skip]
+                        // R54: src-side utf16 length unused (isFuzzyMatchCachedSrc
+                        // looks it up internally from cachedSourceWordAlnumUtf16).
+                        if nextSrc == spkWord || isFuzzyMatchCachedSrc(srcIndex: si + skip, b: spkWord, bCount: spkWordCount) {
+                            // Add all skipped source words' char counts
+                            for s in 0..<skip {
+                                matchedCharCount += cachedSourceWordCharCount[si + s] + 1
+                            }
+                            si += skip
+                            foundSrc = true
+                            break
                         }
-                        si += skip
-                        foundSrc = true
-                        break
                     }
                 }
                 if foundSrc { continue }
 
                 // Try treating current source word as punctuation-only and skip it
                 if srcWord.isEmpty {
-                    matchedCharCount += sourceWords[si].count
-                    if si < sourceWords.count - 1 { matchedCharCount += 1 }
+                    matchedCharCount += cachedSourceWordCharCount[si]
+                    if si < sourceCount - 1 { matchedCharCount += 1 }
                     si += 1
                     continue
                 }
@@ -1029,62 +1460,196 @@ class SpeechRecognizer {
             }
         }
 
-        // Auto-skip trailing annotation words at end of source
-        while si < sourceWords.count {
-            let beginsAnnotation = sourceWords[si].hasPrefix("[")
-                && sourceWords[si...].contains(where: { $0.contains("]") })
-            let skipsAnnotation = isInsideAnnotation || beginsAnnotation || Self.isAnnotationWord(sourceWords[si])
-            guard skipsAnnotation else { break }
-            if beginsAnnotation {
-                isInsideAnnotation = true
-            }
-            if sourceWords[si].contains("]") {
-                isInsideAnnotation = false
-            }
-            matchedCharCount += sourceWords[si].count
-            if si < sourceWords.count - 1 { matchedCharCount += 1 }
+        // Auto-skip trailing annotation words at end of source. R21: O(1) array
+        // lookup via the pre-computed cachedSourceWordIsAnnotation mask.
+        while si < sourceCount, cachedSourceWordIsAnnotation[si] {
+            matchedCharCount += cachedSourceWordCharCount[si]
+            if si < sourceCount - 1 { matchedCharCount += 1 }
             si += 1
         }
 
         return matchedCharCount
     }
 
-    private func isFuzzyMatch(_ a: String, _ b: String) -> Bool {
-        if a.isEmpty || b.isEmpty { return false }
+    /// Fast fuzzy match for two alnum-only words.
+    /// `aUtf16Count` / `bUtf16Count` should be the utf16 length of `a` / `b`
+    /// (caller passes pre-computed counts from cachedSourceWordAlnumUtf16Count
+    /// or the spoken-side word length table). For ASCII/BMP-heavy text — which
+    /// is what STT emits — utf16.count matches Character.count, so the same
+    /// tolerance band applies. Avoids re-running String.count's O(N) grapheme
+    /// walk on every comparison (previously called 2× per side per call,
+    /// and isFuzzyMatch is called up to ~12 times per mismatch in the inner
+    /// word-level match loops).
+    private func isFuzzyMatch(_ a: String, _ b: String, aCount: Int? = nil, bCount: Int? = nil) -> Bool {
+        let aLen = aCount ?? a.utf16.count
+        let bLen = bCount ?? b.utf16.count
+        if aLen == 0 || bLen == 0 { return false }
         // Exact match
         if a == b { return true }
-        let shorter = min(a.count, b.count)
+        let shorter = min(aLen, bLen)
+        let longer = max(aLen, bLen)
         // Prefix match — only for words with at least 3 chars to avoid
         // false positives like "or" matching "organization"
         if shorter >= 3 && (a.hasPrefix(b) || b.hasPrefix(a)) { return true }
-        // Shared prefix >= 60% of shorter word (min 3 chars shared)
-        let shared = zip(a, b).prefix(while: { $0 == $1 }).count
-        if shorter >= 3 && shared >= max(3, shorter * 3 / 5) { return true }
+        // Shared prefix >= 60% of shorter word (min 3 chars shared).
+        // Manual iterator walk over utf16 views — avoids the Zip2 +
+        // PrefixSequence + closure layering that
+        // `zip(a.utf16, b.utf16).prefix(while:).count` would build
+        // (no allocations, just Sequence-protocol dispatch per char).
+        // utf16 indices are Int-backed so index(after:) is cheap.
+        let sharedMax = min(aLen, bLen)
+        var shared = 0
+        if sharedMax >= 3 {
+            let aU16 = a.utf16
+            let bU16 = b.utf16
+            var ai = aU16.startIndex
+            var bi = bU16.startIndex
+            let endA = aU16.index(aU16.startIndex, offsetBy: sharedMax)
+            while ai < endA, aU16[ai] == bU16[bi] {
+                ai = aU16.index(after: ai)
+                bi = bU16.index(after: bi)
+            }
+            shared = aU16.distance(from: aU16.startIndex, to: ai)
+        }
+        if shared >= max(3, sharedMax * 3 / 5) { return true }
         // Edit distance tolerance — stricter for very short words
-        let dist = editDistance(a, b)
+        // Pre-screen by length difference: if the gap already exceeds the
+        // tolerance budget for this word length, skip the DP entirely.
         if shorter <= 2 { return false } // 2-char words must be exact
-        if shorter <= 4 { return dist <= 1 }
-        if shorter <= 8 { return dist <= 2 }
-        return dist <= max(a.count, b.count) / 3
+        let tolerance: Int
+        if shorter <= 4 { tolerance = 1 }
+        else if shorter <= 8 { tolerance = 2 }
+        else { tolerance = longer / 3 }
+        if longer - shorter > tolerance { return false }
+        let dist = editDistance(a, b, maxDistance: tolerance)
+        return dist <= tolerance
     }
 
-    private func editDistance(_ a: String, _ b: String) -> Int {
-        let a = Array(a), b = Array(b)
-        var dp = Array(0...b.count)
-        for i in 1...a.count {
+    /// R54: hot-path isFuzzyMatch variant for when `a` is one of the cached
+    /// source words. Same exact-match / prefix / shared-prefix / DP checks as
+    /// the String overload, but uses the rebuild-time [UInt16] table so the
+    /// inner editDistance call doesn't allocate `Array(a.utf16)`. Spoken-side
+    /// `b` still allocates inside editDistance — it's freshly built per ASR
+    /// partial. Up to ~12 calls per mismatch in wordLevelMatch's skip
+    /// lookahead loops, so this saves 1 allocation + 1 grapheme walk per
+    /// call on the source side.
+    private func isFuzzyMatchCachedSrc(srcIndex: Int, b: String, bCount: Int) -> Bool {
+        let a = cachedSourceWordAlnum[srcIndex]
+        let aLen = cachedSourceWordAlnumUtf16Count[srcIndex]
+        if aLen == 0 || bCount == 0 { return false }
+        // Exact match
+        if a == b { return true }
+        let shorter = min(aLen, bCount)
+        let longer = max(aLen, bCount)
+        // Prefix match — only for words with at least 3 chars to avoid
+        // false positives like "or" matching "organization". The two String
+        // views still allocate on access, but they don't allocate per char
+        // and the prefix walks bail as soon as one mismatch is found.
+        if shorter >= 3 && (a.hasPrefix(b) || b.hasPrefix(a)) { return true }
+        // Shared prefix >= 60% of shorter word (min 3 chars). We reuse the
+        // String view path from the original isFuzzyMatch because the
+        // [UInt16] walking for `a` here would duplicate logic without a
+        // measurable win — the String view is O(1) and the prefix walk
+        // early-exits within ~shared chars.
+        let sharedMax = min(aLen, bCount)
+        var shared = 0
+        if sharedMax >= 3 {
+            let aU16 = a.utf16
+            let bU16 = b.utf16
+            var ai = aU16.startIndex
+            var bi = bU16.startIndex
+            let endA = aU16.index(aU16.startIndex, offsetBy: sharedMax)
+            while ai < endA, aU16[ai] == bU16[bi] {
+                ai = aU16.index(after: ai)
+                bi = bU16.index(after: bi)
+            }
+            shared = aU16.distance(from: aU16.startIndex, to: ai)
+        }
+        if shared >= max(3, sharedMax * 3 / 5) { return true }
+        if shorter <= 2 { return false } // 2-char words must be exact
+        let tolerance: Int
+        if shorter <= 4 { tolerance = 1 }
+        else if shorter <= 8 { tolerance = 2 }
+        else { tolerance = longer / 3 }
+        if longer - shorter > tolerance { return false }
+        // R54: pass cached [UInt16] for source side, skip the
+        // `Array(a.utf16)` re-materialization in editDistance.
+        let dist = editDistance(
+            aCodeUnits: cachedSourceWordAlnumUtf16[srcIndex],
+            b: b,
+            maxDistance: tolerance
+        )
+        return dist <= tolerance
+    }
+
+    /// Ukkonen-style bounded edit distance. Exits early once every active DP
+    /// diagonal exceeds the tolerance, which is the common case for
+    /// unrelated words and avoids O(a·b) work.
+    /// Converts to `[UInt16]` UTF-16 code units instead of `[Character]`.
+    /// Previous version allocated `[Character]` on every call (Character
+    /// is 8-16 bytes enum; `[UInt16]` is 2 bytes per element). `isFuzzyMatch`
+    /// calls this up to ~12× per mismatch in the inner word-level loop.
+    /// For STT content (ASCII alnum + CJK BMP) UTF-16 indexing matches
+    /// Character indexing exactly: ASCII chars are 1 UTF-16 unit each,
+    /// CJK is BMP so 1 unit each, and surrogate pairs (rare in word-level
+    /// text) sit inside the fuzzy tolerance band (≥1-char tolerance for
+    /// short words, 2-char for medium, 30 % for long). (R36)
+    private func editDistance(_ a: String, _ b: String, maxDistance: Int = Int.max) -> Int {
+        // R54: skip the source-side `Array(a.utf16)` allocation when the
+        // caller has the precomputed [UInt16] on hand (rebuild-time). Most
+        // hot-path callers come from wordLevelMatch and pass a cached
+        // source word — see editDistance(aCodeUnits:, b:, ...).
+        return editDistance(aCodeUnits: Array(a.utf16), b: b, maxDistance: maxDistance)
+    }
+
+    /// R54: same DP as the String overload but skips `Array(a.utf16)` on the
+    /// caller-supplied [UInt16]. For the source side of isFuzzyMatch the
+    /// [UInt16] is invariant across ASR partials; passing it in directly
+    /// saves 1 allocation + 1 grapheme → utf16 walk per call (~12 calls per
+    /// mismatch in wordLevelMatch's skip-lookahead). Spoken-side words
+    /// still allocate via `Array(b.utf16)` — they're freshly built per
+    /// partial and have no equivalent cache.
+    private func editDistance(aCodeUnits: [UInt16], b: String, maxDistance: Int) -> Int {
+        let bCodeUnits = Array(b.utf16)
+        let aCount = aCodeUnits.count
+        let bCount = bCodeUnits.count
+        if aCount == 0 { return bCount }
+        if bCount == 0 { return aCount }
+        let lenDiff = aCount - bCount
+        if lenDiff > maxDistance || -lenDiff > maxDistance {
+            return abs(lenDiff)
+        }
+        // Always iterate the shorter string on the outer loop to keep the
+        // DP row small.
+        let (oChars, iChars, oCount, iCount) = aCount <= bCount
+            ? (aCodeUnits, bCodeUnits, aCount, bCount)
+            : (bCodeUnits, aCodeUnits, bCount, aCount)
+        var dp = Array(0...iCount)
+        for i in 1...oCount {
             var prev = dp[0]
             dp[0] = i
-            for j in 1...b.count {
+            let oc = oChars[i - 1]
+            // Best possible score for the rest of this row is bounded by
+            // abs(i - j) + remaining char differences. Use a diagonal cap.
+            let rowBest = abs(i - iCount) // if all chars beyond match
+            // Quick path: if every dp[j] already exceeds tolerance, bail.
+            var rowMin = Int.max
+            for j in 1...iCount {
                 let temp = dp[j]
-                dp[j] = a[i-1] == b[j-1] ? prev : min(prev, dp[j], dp[j-1]) + 1
+                let cost = oc == iChars[j - 1] ? 0 : 1
+                let v = min(prev + cost, dp[j] + 1, dp[j - 1] + 1)
+                dp[j] = v
                 prev = temp
+                if v < rowMin { rowMin = v }
+            }
+            if rowMin > maxDistance && rowBest > maxDistance {
+                return rowMin
             }
         }
-        return dp[b.count]
+        return dp[iCount]
     }
 
-    private static func normalize(_ text: String) -> String {
-        text.lowercased()
-            .filter { $0.isLetter || $0.isNumber || $0.isWhitespace }
+    private static func tailWords(from words: [Substring], count: Int) -> String {
+        words.suffix(count).joined(separator: " ")
     }
 }

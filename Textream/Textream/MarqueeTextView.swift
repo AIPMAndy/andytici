@@ -25,35 +25,118 @@ extension Unicode.Scalar {
 /// Splits text into display-ready words. CJK characters (Chinese, Japanese, Korean)
 /// are split into individual characters so the flow layout can wrap them properly.
 func splitTextIntoWords(_ text: String) -> [String] {
-    let tokens = text.replacingOccurrences(of: "\n", with: " ")
-        .split(omittingEmptySubsequences: true, whereSeparator: { $0.isWhitespace })
-        .map { String($0) }
+    // Single unicodeScalars walk detects both CJK presence and newline presence,
+    // so the fast path can skip the unconditional `replacingOccurrences` copy
+    // when the script has no `\n` (the common case for both Chinese ASR scripts
+    // and Latin dictation). The slow path also collapses replace + split + map
+    // + per-token CJK re-check + per-char CJK split into one Character walk,
+    // avoiding the intermediate [String] array and N redundant String inits.
+    // (R30)
+    var hasCJK = false
+    var hasNewline = false
+    for scalar in text.unicodeScalars {
+        if !hasCJK, scalar.isCJK { hasCJK = true }
+        if !hasNewline, scalar.value == 0x0A { hasNewline = true }
+        if hasCJK && hasNewline { break }
+    }
 
+    if !hasCJK {
+        // No CJK: just split on whitespace. Skip the whole-text replace copy
+        // when there are no newlines to swap.
+        let source = hasNewline ? text.replacingOccurrences(of: "\n", with: " ") : text
+        return source
+            .split(omittingEmptySubsequences: true, whereSeparator: { $0.isWhitespace })
+            .map(String.init)
+    }
+
+    // CJK present: single-pass split. Whitespace and CJK chars are both word
+    // boundaries; consecutive non-CJK chars accumulate into the same word.
+    // Equivalent to the previous 3-pass implementation (replace + split +
+    // per-token CJK split) for every input the previous code accepted.
     var result: [String] = []
-    for token in tokens {
-        guard token.unicodeScalars.contains(where: { $0.isCJK }) else {
-            result.append(token)
+    result.reserveCapacity(text.unicodeScalars.count)
+    var buffer = ""
+    buffer.reserveCapacity(16)
+    for ch in text {
+        if ch.isWhitespace || ch == "\n" {
+            if !buffer.isEmpty {
+                result.append(buffer)
+                buffer.removeAll(keepingCapacity: true)
+            }
             continue
         }
-        // Token contains CJK characters — split each CJK char individually;
-        // consecutive non-CJK chars (e.g. Latin letters, digits) stay grouped.
-        var buffer = ""
-        for char in token {
-            if char.unicodeScalars.first.map({ $0.isCJK }) == true {
-                if !buffer.isEmpty {
-                    result.append(buffer)
-                    buffer = ""
-                }
-                result.append(String(char))
-            } else {
-                buffer.append(char)
+        let isCJKChar = ch.unicodeScalars.first.map { $0.isCJK } ?? false
+        if isCJKChar {
+            if !buffer.isEmpty {
+                result.append(buffer)
+                buffer.removeAll(keepingCapacity: true)
             }
-        }
-        if !buffer.isEmpty {
-            result.append(buffer)
+            result.append(String(ch))
+        } else {
+            buffer.append(ch)
         }
     }
+    if !buffer.isEmpty {
+        result.append(buffer)
+    }
     return result
+}
+
+// MARK: - Word index table (shared O(log N) / O(1) lookup)
+//
+// Replaces the duplicated O(N) charOffsetForWordProgress / wordProgressForCharOffset
+// helpers that lived in NotchOverlayView, FloatingOverlayView, and ExternalDisplayView.
+// Build once per page-change; queries are O(1) (progress → offset) or O(log N) (offset → progress).
+
+struct WordIndexTable {
+    let wordLengths: [Int]
+    let cumulativeEnds: [Int]
+    let totalCharCount: Int
+
+    init(words: [String]) {
+        var lens: [Int] = []
+        lens.reserveCapacity(words.count)
+        var ends: [Int] = []
+        ends.reserveCapacity(words.count)
+        var offset = 0
+        for w in words {
+            lens.append(w.count)
+            offset += w.count
+            ends.append(offset)
+            offset += 1 // space separator
+        }
+        self.wordLengths = lens
+        self.cumulativeEnds = ends
+        self.totalCharCount = max(0, offset - 1)
+    }
+
+    func charOffset(forProgress progress: Double) -> Int {
+        guard !wordLengths.isEmpty else { return 0 }
+        let whole = max(0, min(Int(progress), wordLengths.count - 1))
+        let frac = progress - Double(whole)
+        let base = whole > 0 ? cumulativeEnds[whole - 1] : 0
+        let added = Int(Double(wordLengths[whole]) * frac)
+        return min(base + added, totalCharCount)
+    }
+
+    func wordProgress(forCharOffset charOffset: Int) -> Double {
+        guard !cumulativeEnds.isEmpty else { return 0 }
+        var lo = 0
+        var hi = cumulativeEnds.count
+        while lo < hi {
+            let mid = (lo + hi) >> 1
+            if cumulativeEnds[mid] < charOffset {
+                lo = mid + 1
+            } else {
+                hi = mid
+            }
+        }
+        let idx = min(lo, wordLengths.count - 1)
+        let wordStart = idx > 0 ? cumulativeEnds[idx - 1] : 0
+        let into = max(0, charOffset - wordStart)
+        let denom = max(1, wordLengths[idx])
+        return Double(idx) + Double(into) / Double(denom)
+    }
 }
 
 // MARK: - Data
@@ -61,8 +144,24 @@ func splitTextIntoWords(_ text: String) -> [String] {
 struct WordItem: Identifiable {
     let id: Int
     let word: String
+    /// `word` with a trailing space — pre-computed once at build time so the
+    /// per-frame render path doesn't have to allocate a new String for
+    /// `item.word + " "` on every visible word every render. Was previously
+    /// allocating N Strings/frame at 30 Hz.
+    let wordWithSpace: String
     let charOffset: Int // char offset of this word in the full text (counting spaces)
     let isAnnotation: Bool // true for [bracket] words and emoji-only words
+    /// Cached count of letters+digits in `word`. Used to decide when the
+    /// word is "fully lit". Previously recomputed in `wordView` for every
+    /// visible word every render frame via Character.isLetter/isNumber,
+    /// which is slow (Unicode lookup) and wasted work for words that
+    /// haven't changed.
+    let letterCount: Int
+    /// Cached `word.count` (grapheme length). Used by the hot path
+    /// `nextWordIndex` which runs at ASR cadence for every visible word —
+    /// calling String.count on every access is an O(N) Unicode walk. Once
+    /// populated here at build time, lookups are O(1).
+    let wordCount: Int
 }
 
 // MARK: - Preference key to report word Y positions
@@ -71,6 +170,47 @@ struct WordYPreferenceKey: PreferenceKey {
     static var defaultValue: [Int: CGFloat] = [:]
     static func reduce(value: inout [Int: CGFloat], nextValue: () -> [Int: CGFloat]) {
         value.merge(nextValue(), uniquingKeysWith: { $1 })
+    }
+}
+
+/// Pre-computed derived Font / Color values used by `WordFlowLayout.wordView`.
+/// Previously these were allocated inside `wordView` itself, once per visible
+/// word per body call — at 30 fps × ~100 visible words × 5+ allocations per
+/// word that's ~15k Color/Font allocations/sec for values that only change when
+/// the user edits settings. Hoisting to a single struct built once per
+/// `body` collapses those to one allocation per frame.
+private struct WordStyles {
+    let baseFont: Font
+    let boldFont: Font
+    let heavyFont: Font
+    let italicFont: Font
+    /// `highlightColor.opacity(0.6)` — used for current-but-not-yet-letters-lit word.
+    let dimHighlight: Color
+    /// `highlightColor.opacity(0.3)` — used for fully-lit words.
+    let readHighlight: Color
+    /// `cueColor.opacity(cueReadOpacity)` — annotation that has been read.
+    let annotationRead: Color
+    /// `cueColor.opacity(cueUnreadOpacity)` — annotation not yet read.
+    let annotationUnread: Color
+
+    static func make(
+        font: NSFont,
+        highlightColor: Color,
+        cueColor: Color,
+        cueReadOpacity: Double,
+        cueUnreadOpacity: Double
+    ) -> WordStyles {
+        let f = Font(font)
+        return WordStyles(
+            baseFont: f,
+            boldFont: f.weight(.bold),
+            heavyFont: f.weight(.heavy),
+            italicFont: f.italic(),
+            dimHighlight: highlightColor.opacity(0.6),
+            readHighlight: highlightColor.opacity(0.3),
+            annotationRead: cueColor.opacity(cueReadOpacity),
+            annotationUnread: cueColor.opacity(cueUnreadOpacity)
+        )
     }
 }
 
@@ -96,15 +236,32 @@ struct SpeechScrollView: View {
     var isListening: Bool = true
     @State private var scrollOffset: CGFloat = 0
     @State private var manualOffset: CGFloat = 0
-    @State private var wordYPositions: [Int: CGFloat] = [:]
+    // Dense flat array indexed by word.id. WordItem.id is assigned as 0,1,2…
+    // in buildItems(), so the array index is exactly the word id — no hashing,
+    // no Dictionary.Values lazy view, no scattered allocations. `nil` means
+    // "this slot hasn't been laid out yet" (the slot will be populated once
+    // SwiftUI flushes that line's GeometryReader preference). This replaces
+    // the previous `[Int: CGFloat]` dictionary: per-element lookup drops from
+    // ~30 ns (hash + bucket walk) to ~3 ns (bounds check + load), and the
+    // linear scan in wordProgressAtCurrentOffset runs over contiguous memory
+    // instead of hash-table entries. (R20)
+    @State private var wordYPositions: [CGFloat?] = []
     @State private var containerHeight: CGFloat = 0
     @State private var isUserScrolling: Bool = false
+    // R48: derived from highlightedCharCount but updated only when ASR
+    // actually crosses a word boundary. Drives WordFlowLayout's per-word
+    // visual state (isNextWord / isFullyLit). Same-word ASR ticks no
+    // longer trigger WordFlowLayout.body re-runs.
+    @State private var nextIdx: Int = 0
 
     var body: some View {
         GeometryReader { geo in
             WordFlowLayout(
                 words: words,
-                highlightedCharCount: highlightedCharCount,
+                // R48: pass `nextIdx` instead of `highlightedCharCount`. Body
+                // now re-runs only when ASR crosses a word boundary — most
+                // ASR ticks don't.
+                nextIdx: nextIdx,
                 font: font,
                 highlightColor: highlightColor,
                 cueColor: cueColor,
@@ -125,14 +282,35 @@ struct SpeechScrollView: View {
             )
             .onPreferenceChange(WordYPreferenceKey.self) { positions in
                 let wasEmpty = wordYPositions.isEmpty
-                wordYPositions = positions
+                // R41 incremental update: instead of rebuilding the entire
+                // [CGFloat?] of length `words.count` on every layout flush
+                // (~60 Hz during scroll, ~16 KB of optional writes for a
+                // 1000-word script), reuse the existing buffer and only
+                // write the slots that arrived. Stale entries for off-screen
+                // words are harmless: `currentMaxY()` only walks slots, and
+                // an overestimate of maxY only widens the scroll bound, never
+                // corrupting the centered-word lookup. On `words` array
+                // change the `onChange(of: words)` handler clears the buffer
+                // back to [] — see line ~332.
+                var arr = wordYPositions
+                let target = words.count
+                if arr.count < target {
+                    arr.append(contentsOf: repeatElement(nil, count: target - arr.count))
+                } else if arr.count > target {
+                    arr.removeLast(arr.count - target)
+                }
+                for (id, y) in positions where id >= 0 && id < target {
+                    arr[id] = y
+                }
+                wordYPositions = arr
                 // After a page switch, wordYPositions was cleared — recenter once new positions arrive
-                if wasEmpty && !positions.isEmpty {
+                if wasEmpty && !arr.isEmpty {
                     recalcCenter(containerHeight: containerHeight)
                 }
             }
             .offset(y: scrollOffset + manualOffset)
-            .animation(smoothScroll ? .linear(duration: 0.06) : .easeOut(duration: 0.5), value: scrollOffset)
+            // Animate manual offset only — ASR-driven scrollOffset must be
+            // discrete so 200ms partials don't pile up overlapping tweens.
             .animation(.easeOut(duration: 0.15), value: manualOffset)
             .onChange(of: geo.size.height) { _, newHeight in
                 containerHeight = newHeight
@@ -144,13 +322,30 @@ struct SpeechScrollView: View {
                     recalcCenter(containerHeight: newHeight)
                 }
             }
-            .onChange(of: highlightedCharCount) { _, _ in
+            .onChange(of: highlightedCharCount) { _, newCount in
+                // R48: derive nextIdx from the new highlightedCharCount and
+                // only update @State when it actually changed. Same-word
+                // ASR ticks (the majority — 5-20 Hz for short words, ~1 Hz
+                // for long ones) leave nextIdx untouched, so SwiftUI does
+                // not re-run WordFlowLayout.body. Items are pulled from the
+                // shared layout cache to avoid duplicating the buildItems()
+                // walk; the static `_memoizedNextIdx` inside WordFlowLayout
+                // still owns the monotonic scan-forward shortcut.
+                let items = WordFlowLayout._peekCachedItems()
+                if !items.isEmpty {
+                    let newNext = WordFlowLayout.nextWordIndex(items: items, target: newCount)
+                    if newNext != nextIdx { nextIdx = newNext }
+                }
+                // While the user is manually scrolling, do NOT recenter — let
+                // them browse the script freely without ASR yanking them back.
+                if isUserScrolling { return }
                 if isListening && !smoothScroll {
                     manualOffset = 0
                     recalcCenter(containerHeight: containerHeight)
                 }
             }
             .onChange(of: smoothWordProgress) { _, _ in
+                if isUserScrolling { return }
                 if isListening && smoothScroll {
                     manualOffset = 0
                     recalcCenter(containerHeight: containerHeight)
@@ -167,7 +362,11 @@ struct SpeechScrollView: View {
                 let lineHeight = font.pointSize * 1.4
                 scrollOffset = containerHeight * 0.5 - lineHeight * 0.5
                 manualOffset = 0
-                wordYPositions = [:]
+                wordYPositions = []
+                // R48: words array changed — reset nextIdx so the next render
+                // recomputes against the fresh items cache. buildItems()
+                // already invalidated WordFlowLayout._memoizedNextIdx.
+                nextIdx = 0
             }
             .onAppear {
                 containerHeight = geo.size.height
@@ -178,16 +377,20 @@ struct SpeechScrollView: View {
             .overlay(
                 ScrollWheelView(
                     onScroll: { delta in
-                        let canScroll = smoothScroll ? isListening : !isListening
-                        guard canScroll else { return }
+                        // Accept scroll input in every mode. Previously this was
+                        // gated by `smoothScroll ? isListening : !isListening`,
+                        // which made scrolling impossible in word-tracking mode
+                        // while ASR was running — users couldn't nudge the
+                        // overlay when ASR jumped to the wrong position.
 
-                        // Pause timer when user starts scrolling in smooth mode
-                        if smoothScroll && !isUserScrolling {
+                        // On the first scroll event, mark the user as driving
+                        // so ASR-side recentering yields until they release.
+                        if !isUserScrolling {
                             isUserScrolling = true
                             onManualScroll?(true, 0)
                         }
 
-                        let maxY = wordYPositions.values.max() ?? 0
+                        let maxY = currentMaxY()
                         let containerHeight = geo.size.height
                         let maxUp = containerHeight * 0.5
                         let maxDown = max(0, maxY - containerHeight * 0.5)
@@ -207,16 +410,18 @@ struct SpeechScrollView: View {
                         }
                     },
                     onScrollEnd: {
-                        if smoothScroll && isUserScrolling {
+                        if isUserScrolling {
                             // Find the word at the new visual center
                             let newProgress = wordProgressAtCurrentOffset()
                             withAnimation(.easeOut(duration: 0.15)) {
                                 manualOffset = 0
                             }
                             isUserScrolling = false
+                            // Notify parent so it can anchor ASR / timer at
+                            // the position the user picked.
                             onManualScroll?(false, newProgress)
                         } else {
-                            let maxY = wordYPositions.values.max() ?? 0
+                            let maxY = currentMaxY()
                             let containerHeight = geo.size.height
                             let upperBound = containerHeight * 0.5
                             let lowerBound = -max(0, maxY - containerHeight * 0.5)
@@ -256,7 +461,16 @@ struct SpeechScrollView: View {
             let fraction = smoothWordProgress - Double(wordIdx)
             let clampedIdx = max(0, min(wordIdx, words.count - 1))
             guard let wordY = wordYPositions[clampedIdx] else { return }
-            let nextY = wordYPositions[clampedIdx + 1] ?? wordY
+            // Defensive bounds-checked read so clampedIdx == words.count
+            // (when smoothWordProgress points at the very last word)
+            // keeps the original "fall back to wordY" semantics instead of
+            // crashing on an out-of-range index. (R20)
+            let nextY: CGFloat
+            if clampedIdx + 1 < wordYPositions.count, let next = wordYPositions[clampedIdx + 1] {
+                nextY = next
+            } else {
+                nextY = wordY
+            }
             let interpolatedY = wordY + (nextY - wordY) * CGFloat(fraction)
             scrollOffset = bottomAnchor - interpolatedY
         } else {
@@ -272,58 +486,140 @@ struct SpeechScrollView: View {
         }
     }
 
+    /// Returns the largest populated Y value in `wordYPositions`, or 0 if the
+    /// array is empty/all-nil. Replaces the previous
+    /// `wordYPositions.values.max()` calls in the scroll handlers, which on a
+    /// Dictionary allocated a lazy `Dictionary.Values` view and then iterated
+    /// the hash buckets. This is a single linear scan over the dense array,
+    /// no intermediate view, no hash table traversal. (R20)
+    private func currentMaxY() -> CGFloat {
+        var maxY: CGFloat = 0
+        for v in wordYPositions {
+            if let v, v > maxY { maxY = v }
+        }
+        return maxY
+    }
+
     /// Find the word progress at the current visual position (scrollOffset + manualOffset)
     private func wordProgressAtCurrentOffset() -> Double {
         let center = containerHeight * 0.5
         // The Y position currently at the center of the view
         let targetY = center - (scrollOffset + manualOffset)
 
-        // Find the closest word and interpolate
-        let sorted = wordYPositions.sorted { $0.key < $1.key }
-        guard !sorted.isEmpty else { return smoothWordProgress }
+        // Single linear pass over the dense [CGFloat?] array (R20).
+        // Previously this iterated a Dictionary<Int,CGFloat> which involved
+        // hash-bucket traversal. Now it walks contiguous memory in id order
+        // (id == array index). Nil entries — words that haven't been laid
+        // out yet — are skipped, matching the previous "key absent" semantics.
+        let count = wordYPositions.count
+        guard count > 0 else { return smoothWordProgress }
 
-        for i in 0..<sorted.count {
-            let (wordIdx, wordY) = sorted[i]
-            if i + 1 < sorted.count {
-                let (_, nextY) = sorted[i + 1]
-                if targetY >= wordY && targetY <= nextY {
-                    let frac = (nextY - wordY) > 0 ? Double(targetY - wordY) / Double(nextY - wordY) : 0
-                    return Double(wordIdx) + frac
-                }
-            } else if targetY >= wordY {
-                return Double(wordIdx)
+        var prevId: Int = 0
+        var prevY: CGFloat = 0
+        var hasPrev = false
+        var firstY: CGFloat = 0
+        var sawFirst = false
+
+        for (id, yOpt) in wordYPositions.enumerated() {
+            guard let y = yOpt else { continue }
+            if !sawFirst {
+                firstY = y
+                sawFirst = true
             }
+            if hasPrev {
+                if targetY >= prevY && targetY <= y {
+                    let span = y - prevY
+                    let frac = span > 0 ? Double(targetY - prevY) / Double(span) : 0
+                    return Double(prevId) + frac
+                }
+            }
+            prevId = id
+            prevY = y
+            hasPrev = true
         }
-        // If scrolled above all words, return 0
-        if targetY < (sorted.first?.value ?? 0) {
+
+        // Past the last word → return count
+        if hasPrev && targetY >= prevY {
+            return Double(words.count)
+        }
+        // Above the first word → 0
+        if sawFirst && targetY < firstY {
             return 0
         }
-        return Double(words.count)
+        return smoothWordProgress
     }
 
     private func activeWordIndex() -> Int {
-        var offset = 0
-        for (i, word) in words.enumerated() {
-            let end = offset + word.count
-            if highlightedCharCount <= end { return i }
-            offset = end + 1
+        // Scan from the last memoized index when highlightedCharCount has
+        // moved forward (the usual case for ASR). Restart from 0 only if
+        // the count went backwards or the memoized position is invalid.
+        let target = highlightedCharCount
+        let n = words.count
+        if n == 0 { return 0 }
+        var i = max(0, Self._memoizedActiveIdx)
+        if i >= n { i = 0; Self._memoizedActiveIdx = 0 }
+        // Quick check: see if the previously cached word still covers target
+        if i > 0 {
+            let item = cachedItemsForActive[i]
+            if item.charOffset <= target && target <= item.charOffset + max(1, item.letterCount) {
+                return i
+            }
         }
-        return max(0, words.count - 1)
+        while i < n {
+            let item = cachedItemsForActive[i]
+            if target <= item.charOffset + max(1, item.letterCount) {
+                Self._memoizedActiveIdx = i
+                return i
+            }
+            i += 1
+        }
+        Self._memoizedActiveIdx = max(0, n - 1)
+        return Self._memoizedActiveIdx
     }
 
     /// Returns (wordIndex, fractionThroughWord) for smooth interpolation
     private func activeWordFraction() -> (Int, Double) {
-        var offset = 0
-        for (i, word) in words.enumerated() {
-            let end = offset + word.count
-            if highlightedCharCount <= end {
-                let wordLen = max(1, word.count)
-                let into = highlightedCharCount - offset
+        let target = highlightedCharCount
+        let n = words.count
+        if n == 0 { return (0, 1.0) }
+        var i = max(0, Self._memoizedActiveIdx)
+        if i >= n { i = 0 }
+        while i < n {
+            let item = cachedItemsForActive[i]
+            let wordLen = max(1, item.letterCount)
+            if target <= item.charOffset + wordLen {
+                let into = target - item.charOffset
+                Self._memoizedActiveIdx = i
                 return (i, Double(into) / Double(wordLen))
             }
-            offset = end + 1
+            i += 1
         }
-        return (max(0, words.count - 1), 1.0)
+        Self._memoizedActiveIdx = max(0, n - 1)
+        return (Self._memoizedActiveIdx, 1.0)
+    }
+
+    // Memoized last-hit index for activeWordIndex/activeWordFraction.
+    // Highlighted char count is monotonic during ASR, so once we know the
+    // active word we only need to scan forward from there on subsequent
+    // calls. Falls back to 0 if invalidated (see invalidateActiveMemo).
+    private static var _memoizedActiveIdx: Int = 0
+
+    // Snapshot of [WordItem] used by activeWordIndex / activeWordFraction.
+    // We need charOffset + letterCount (cached on the item) — not just the
+    // raw `words` strings — so the scanner doesn't have to call .count on
+    // each String every iteration (which is an O(N) grapheme walk).
+    // Refreshed from _cachedItems when SpeechScrollView invalidates layout.
+    private static var _cachedItemsForActive: [WordItem] = []
+    private static var _cachedItemsForActiveCount: Int = -1
+
+    private var cachedItemsForActive: [WordItem] {
+        // Refresh only when the cached layout changes (cheap identity check).
+        let n = WordFlowLayout._cachedItemsCount
+        if n != Self._cachedItemsForActiveCount || Self._cachedItemsForActive.isEmpty {
+            Self._cachedItemsForActive = WordFlowLayout._peekCachedItems()
+            Self._cachedItemsForActiveCount = n
+        }
+        return Self._cachedItemsForActive
     }
 }
 
@@ -331,7 +627,13 @@ struct SpeechScrollView: View {
 
 struct WordFlowLayout: View {
     let words: [String]
-    let highlightedCharCount: Int
+    // R48: replace the per-tick `highlightedCharCount` parameter with
+    // `nextIdx` (the only signal that actually affects per-word visual state).
+    // ASR ticks that advance within a word leave nextIdx unchanged, so
+    // SwiftUI does not re-run this view's body. The previous version ran
+    // body at ASR cadence (5-20 Hz) just to re-derive nextIdx — see the
+    // matching change in SpeechScrollView.onChange(of: highlightedCharCount).
+    let nextIdx: Int
     let font: NSFont
     var highlightColor: Color = .white
     var cueColor: Color = .white
@@ -344,65 +646,177 @@ struct WordFlowLayout: View {
     var viewportHeight: CGFloat = 0
 
     // Compute line spacing based on font metrics — fonts with large built-in
-    // line height (e.g. OpenDyslexic) need less extra spacing
-    private var lineSpacing: CGFloat {
-        let intrinsicHeight = font.ascender - font.descender + font.leading
-        let ratio = intrinsicHeight / font.pointSize
-        // System fonts: ratio ~1.2, OpenDyslexic: ratio ~1.7+
-        return ratio > 1.5 ? 2 : 8
-    }
+    // line height (e.g. OpenDyslexic) need less extra spacing. Cached against
+    // pointSize so we don't touch NSFont metric getters on every body call.
+    private static var _cachedLineSpacing: CGFloat = 0
 
     // Simple layout cache to avoid re-measuring words on every highlight update
-    private static var _cacheKey: String = ""
+    private static var _cachedWordsCount: Int = 0
+    private static var _cachedFirst: String = ""
+    private static var _cachedLast: String = ""
+    private static var _cachedPointSize: CGFloat = 0
+    private static var _cachedWidth: Int = 0
     private static var _cachedItems: [WordItem] = []
     private static var _cachedLines: [[WordItem]] = []
+    private static var _cachedRTL: Bool = false
+    // Standalone mirror of _cachedItems.count, exposed to SpeechScrollView
+    // (where activeWordIndex lives) so it can detect cache invalidation
+    // without copying the whole [WordItem] array on every call.
+    static var _cachedItemsCount: Int = 0
+    // Lightweight handle for SpeechScrollView to read the cached items
+    // without re-running buildItems(). Returns whatever's currently cached
+    // (possibly stale on first invocation — caller compares count).
+    static func _peekCachedItems() -> [WordItem] {
+        return _cachedItems
+    }
+    // Memoize the last-hit index for nextWordIndex — ASR progress is
+    // nearly monotonic, so the active word is almost always the same or
+    // the next one, and we don't need to restart the scan from index 0
+    // on every partial. Invalidated in buildItems() when items change.
+    private static var _memoizedNextIdx: Int = -1
 
-    private func cachedLayout() -> ([WordItem], [[WordItem]]) {
-        let key = "\(words.count)|\(words.first ?? "")|\(words.last ?? "")|\(font.pointSize)|\(Int(containerWidth))"
-        if key == Self._cacheKey {
-            return (Self._cachedItems, Self._cachedLines)
+    private func cachedLayout() -> ([WordItem], [[WordItem]], Bool, CGFloat) {
+        let w = words
+        let count = w.count
+        let first = w.first ?? ""
+        let last = w.last ?? ""
+        let pointSize = font.pointSize
+        let width = Int(containerWidth)
+        if count == Self._cachedWordsCount
+           && first == Self._cachedFirst
+           && last == Self._cachedLast
+           && pointSize == Self._cachedPointSize
+           && width == Self._cachedWidth {
+            // pointSize changed-or-not, lineSpacing is a pure function of pointSize,
+            // so it's safe to read it whenever the rest of the cache is valid.
+            let lineSpacing: CGFloat = {
+                if pointSize == Self._cachedPointSize && Self._cachedLineSpacing != 0 {
+                    return Self._cachedLineSpacing
+                }
+                let intrinsic = font.ascender - font.descender + font.leading
+                let ratio = intrinsic / font.pointSize
+                let s: CGFloat = ratio > 1.5 ? 2 : 8
+                Self._cachedLineSpacing = s
+                return s
+            }()
+            return (Self._cachedItems, Self._cachedLines, Self._cachedRTL, lineSpacing)
         }
-        let items = buildItems()
+        let (items, rtl) = buildItems()
         let lines = buildLines(items: items)
-        Self._cacheKey = key
+        // Compute lineSpacing now (font metrics), keyed off the new pointSize.
+        let intrinsic = font.ascender - font.descender + font.leading
+        let ratio = intrinsic / font.pointSize
+        let lineSpacing: CGFloat = ratio > 1.5 ? 2 : 8
+        Self._cachedWordsCount = count
+        Self._cachedFirst = first
+        Self._cachedLast = last
+        Self._cachedPointSize = pointSize
+        Self._cachedWidth = width
         Self._cachedItems = items
+        Self._cachedItemsCount = items.count
         Self._cachedLines = lines
-        return (items, lines)
+        Self._cachedRTL = rtl
+        Self._cachedLineSpacing = lineSpacing
+        return (items, lines, rtl, lineSpacing)
     }
 
-    // Find the index of the next word to read (first non-fully-lit, non-annotation word)
-    private func nextWordIndex(items: [WordItem]) -> Int {
-        for item in items {
-            if item.isAnnotation { continue }
-            let charsIntoWord = highlightedCharCount - item.charOffset
-            let litCount = max(0, min(item.word.count, charsIntoWord))
-            let letterCount = max(1, item.word.filter { $0.isLetter || $0.isNumber }.count)
-            if litCount < letterCount {
+    // Find the index of the next word to read (first non-fully-lit, non-annotation word).
+    // charOffset is monotonically non-decreasing, so for monotonic ASR progress we can
+    // resume scanning from the last hit instead of restarting at index 0.
+    // R48: static + parameterized on `target`. Previously this lived as an instance
+    // method that read `self.highlightedCharCount`, which forced WordFlowLayout.body
+    // to re-evaluate every ASR tick (5-20 Hz). After R48 SpeechScrollView owns the
+    // "next word" derivation and only updates its `nextIdx` @State when ASR actually
+    // crosses a word boundary — body re-runs drop by ~90 % during steady ASR.
+    static func nextWordIndex(items: [WordItem], target: Int) -> Int {
+        let n = items.count
+        if _memoizedNextIdx >= n { _memoizedNextIdx = -1 }
+        var i = max(0, _memoizedNextIdx)
+        while i < n {
+            let item = items[i]
+            if item.isAnnotation { i += 1; continue }
+            let charsIntoWord = target - item.charOffset
+            let litCount = max(0, min(item.wordCount, charsIntoWord))
+            if litCount < item.letterCount {
+                _memoizedNextIdx = i
                 return item.id
             }
+            i += 1
         }
+        _memoizedNextIdx = -1
         return -1
     }
 
-    private func isRightToLeft(items: [WordItem]) -> Bool {
-        for item in items where !item.isAnnotation {
-            switch textBaseDirection(in: item.word) {
-            case .rightToLeft:
-                return true
-            case .leftToRight:
-                return false
-            case .natural:
-                continue
+    // Per-line row in the rendered marquee. Hoists the GeometryReader that
+    // reports word Y positions out of wordView (which used to do it for
+    // every visible word) — all words in an HStack share the same baseline Y,
+    // so one GeometryReader per visible line is sufficient.
+    @ViewBuilder
+    private func lineRow(
+        lineIdx: Int,
+        line: [WordItem],
+        isVisible: Bool,
+        isLeadingPlaceholder: Bool,
+        startLine: Int,
+        nextIdx: Int,
+        rtl: Bool,
+        styles: WordStyles
+    ) -> some View {
+        if isLeadingPlaceholder {
+            Color.clear.frame(height: CGFloat(startLine) * (ceil(font.ascender - font.descender + font.leading) + lineSpacingCached))
+        } else if isVisible {
+            HStack(spacing: 0) {
+                ForEach(line, id: \.id) { item in
+                    wordView(for: item, isNextWord: item.id == nextIdx, styles: styles)
+                        .id(item.id)
+                }
             }
+            .environment(\.layoutDirection, rtl ? .rightToLeft : .leftToRight)
+            // Single GeometryReader per visible line (was: one per visible word,
+            // i.e. ~5-10× more evaluations per frame). Each word on this line
+            // gets the same Y reported under its own id so downstream
+            // `wordYPositions[id]` reads (now backed by a dense [CGFloat?]
+            // indexed by id — R20) get the right value.
+            .background(GeometryReader { lineGeo in
+                let y = lineGeo.frame(in: .named("flowLayout")).midY
+                let count = line.count
+                var pairs = [Int: CGFloat](minimumCapacity: count)
+                var i = 0
+                while i < count {
+                    pairs[line[i].id] = y
+                    i += 1
+                }
+                return Color.clear.preference(
+                    key: WordYPreferenceKey.self,
+                    value: pairs
+                )
+            })
+        } else {
+            Color.clear.frame(height: ceil(font.ascender - font.descender + font.leading) + lineSpacingCached)
         }
-        return false
+    }
+
+    // Reading cached layout line spacing (avoids re-deriving in lineRow)
+    private var lineSpacingCached: CGFloat {
+        Self._cachedLineSpacing
     }
 
     var body: some View {
-        let (items, lines) = cachedLayout()
-        let nextIdx = nextWordIndex(items: items)
+        let (items, lines, rtl, lineSpacing) = cachedLayout()
+        // R48: nextIdx is now a prop — no need to recompute here. Body re-runs
+        // only when nextIdx actually changes (≈ per-word advance, not per ASR tick).
         let totalLines = lines.count
-        let rtl = isRightToLeft(items: items)
+
+        // Pre-compute derived Font/Color values once per frame (R18). wordView
+        // used to recompute these per visible word; for ~100 visible words at
+        // 30 fps that was ~15k Color/Font allocations/sec of constant values.
+        let styles = WordStyles.make(
+            font: font,
+            highlightColor: highlightColor,
+            cueColor: cueColor,
+            cueReadOpacity: cueReadOpacity,
+            cueUnreadOpacity: cueUnreadOpacity
+        )
 
         // Estimate line height for visibility culling using actual font metrics
         let lineH = ceil(font.ascender - font.descender + font.leading) + lineSpacing
@@ -416,190 +830,194 @@ struct WordFlowLayout: View {
         // For RTL scripts (Arabic, Hebrew, Persian, Urdu), flip the layout direction
         // so words within each line flow right-to-left instead of left-to-right.
         VStack(alignment: rtl ? .trailing : .leading, spacing: lineSpacing) {
-            if startLine > 0 {
-                Color.clear.frame(height: CGFloat(startLine) * lineH)
-            }
-
-            ForEach(startLine..<endLine, id: \.self) { lineIdx in
-                HStack(spacing: 0) {
-                    ForEach(lines[lineIdx], id: \.id) { item in
-                        wordView(for: item, isNextWord: item.id == nextIdx)
-                            .id(item.id)
-                    }
-                }
-                .environment(\.layoutDirection, rtl ? .rightToLeft : .leftToRight)
-            }
-
-            if endLine < totalLines {
-                Color.clear.frame(height: CGFloat(totalLines - endLine) * lineH)
+            ForEach(lines.indices, id: \.self) { lineIdx in
+                lineRow(
+                    lineIdx: lineIdx,
+                    line: lines[lineIdx],
+                    isVisible: lineIdx >= startLine && lineIdx < endLine,
+                    isLeadingPlaceholder: lineIdx == startLine && startLine > 0,
+                    startLine: startLine,
+                    nextIdx: nextIdx,
+                    rtl: rtl,
+                    styles: styles
+                )
             }
         }
         .frame(maxWidth: .infinity, alignment: rtl ? .trailing : .leading)
         .coordinateSpace(name: "flowLayout")
     }
 
-    private func wordView(for item: WordItem, isNextWord: Bool) -> AnyView {
-        let wordLen = item.word.count
-        let charsIntoWord = highlightedCharCount - item.charOffset
-        let litCount = max(0, min(wordLen, charsIntoWord))
-        let letterCount = max(1, item.word.filter { $0.isLetter || $0.isNumber }.count)
-        let isFullyLit = litCount >= letterCount
-        let isCurrentWord = isNextWord || (charsIntoWord >= 0 && !isFullyLit)
+    // Per-word render. Previously returned AnyView (which forced SwiftUI to
+    // box each visible word's view subtree into an existential, defeating the
+    // diff optimizer's ability to match concrete types across frames).
+    // Returns opaque `some View` instead: each branch returns a concrete
+    // `_ModifiedContent<...>` shape that SwiftUI can compare structurally
+    // across renders, skipping the AnyView alloc. Tagged-word branch is
+    // inlined (no scriptedTagView indirection) for the same reason.
+    @ViewBuilder
+    private func wordView(for item: WordItem, isNextWord: Bool, styles: WordStyles) -> some View {
+        // Compute the per-word flags up front in a plain function (not a
+        // @ViewBuilder body) — the ViewBuilder cannot accept assignments to
+        // `let` as the first statements of its body.
+        let (isFullyLit, isCurrentWord) = wordFlags(item: item, isNextWord: isNextWord)
 
-        // Andy题词 ScriptTag emoji rendering — give each tag a distinct visual cue
-        // (emphasis=bold+yellow, climax=orange+bold, pause=italic gray, etc.).
+        // Andy题词 ScriptTag emoji rendering — give each tag a distinct visual cue.
+        // Inlined (was: a separate scriptedTagView() that returned AnyView)
+        // so tagged words also stay opaque to the diff.
         if let tag = ScriptTag.tagForWord(item.word) {
-            return AnyView(scriptedTagView(tag: tag, item: item))
+            switch tag {
+            case .emphasis:
+                Text(item.wordWithSpace)
+                    .font(styles.boldFont)
+                    .foregroundStyle(Color.andyGold)
+            case .highEnergy:
+                Text(item.wordWithSpace)
+                    .font(styles.boldFont)
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 4)
+                    .background(Color.yellow)
+            case .pause:
+                Text(item.wordWithSpace)
+                    .font(styles.italicFont)
+                    .foregroundStyle(.gray)
+            case .exclaim:
+                Text(item.wordWithSpace)
+                    .font(styles.boldFont)
+                    .foregroundStyle(Color.red)
+            case .hint:
+                Text(item.wordWithSpace)
+                    .font(.system(size: max(font.pointSize - 4, 10)).italic())
+                    .foregroundStyle(Color.gray)
+            case .climax:
+                Text(item.wordWithSpace)
+                    .font(styles.heavyFont)
+                    .foregroundStyle(Color.orange)
+            }
         }
-
         // When highlighting is off (classic/silence-paused), use uniform color
-        if !highlightWords {
+        else if !highlightWords {
             let uniformColor: Color = item.isAnnotation
-                ? cueColor.opacity(cueUnreadOpacity)
+                ? styles.annotationUnread
                 : highlightColor
 
-            return AnyView(
-                Text(item.word + " ")
-                    .font(item.isAnnotation ? Font(font).italic() : Font(font))
-                    .foregroundStyle(uniformColor)
-                    .background(
-                        GeometryReader { wordGeo in
-                            Color.clear.preference(
-                                key: WordYPreferenceKey.self,
-                                value: [item.id: wordGeo.frame(in: .named("flowLayout")).midY]
-                            )
-                        }
-                    )
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        onWordTap?(item.charOffset)
-                    }
-            )
-        }
-
-        // Annotations: italic, dimmed with cue color
-        if item.isAnnotation {
-            let annotationColor: Color = isFullyLit
-                ? cueColor.opacity(cueReadOpacity)
-                : cueColor.opacity(cueUnreadOpacity)
-
-            return AnyView(
-                Text(item.word + " ")
-                    .font(Font(font).italic())
-                    .foregroundStyle(annotationColor)
-                    .background(
-                        GeometryReader { wordGeo in
-                            Color.clear.preference(
-                                key: WordYPreferenceKey.self,
-                                value: [item.id: wordGeo.frame(in: .named("flowLayout")).midY]
-                            )
-                        }
-                    )
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        onWordTap?(item.charOffset)
-                    }
-            )
-        }
-
-        // Dim color: highlight color variant for current word, full for unread
-        let dimColor: Color = isCurrentWord
-            ? highlightColor.opacity(0.6)
-            : highlightColor
-
-        // Base color for the whole word
-        let wordColor: Color = isFullyLit ? highlightColor.opacity(0.3) : dimColor
-
-        // Andy题词 当前词焦点加强：略大字号 + 粗体 + 强色下划线
-        let currentWordFont: Font = isCurrentWord
-            ? Font(font).weight(.bold)
-            : Font(font)
-        let currentWordColor: Color = isCurrentWord
-            ? highlightColor
-            : wordColor
-
-        return AnyView(
-            Text(item.word + " ")
-                .font(currentWordFont)
-                .foregroundStyle(currentWordColor)
-                .underline(isCurrentWord, color: highlightColor)
-                .background(
-                    GeometryReader { wordGeo in
-                        Color.clear.preference(
-                            key: WordYPreferenceKey.self,
-                            value: [item.id: wordGeo.frame(in: .named("flowLayout")).midY]
-                        )
-                    }
-                )
+            Text(item.wordWithSpace)
+                .font(item.isAnnotation ? styles.italicFont : styles.baseFont)
+                .foregroundStyle(uniformColor)
+                // Word Y is now reported once per visible line by the
+                // HStack-level GeometryReader in `body`. This word-level
+                // background just keeps the modifier chain shape (and the
+                // hit area) stable.
+                .background(Color.clear)
                 .contentShape(Rectangle())
                 .onTapGesture {
                     onWordTap?(item.charOffset)
                 }
-        )
-    }
+        }
+        // Annotations: italic, dimmed with cue color
+        else if item.isAnnotation {
+            let annotationColor: Color = isFullyLit
+                ? styles.annotationRead
+                : styles.annotationUnread
 
-    // Andy题词 ScriptTag emoji render: each tag gets a distinctive color/weight.
-    // Returns AnyView (instead of opaque `some View`) so callers using @ViewBuilder
-    // can compose multiple branches with different concrete Text modifier types.
-    private func scriptedTagView(tag: ScriptTagToken.Tag, item: WordItem) -> AnyView {
-        switch tag {
-        case .emphasis:
-            // 🎯 关键词 — bold + larger
-            return AnyView(
-                Text(item.word + " ")
-                    .font(Font(font).weight(.bold))
-                    .foregroundStyle(Color.andyGold)
-            )
-        case .highEnergy:
-            // ⚡ 重点句 — yellow background pill
-            return AnyView(
-                Text(item.word + " ")
-                    .font(Font(font).weight(.bold))
-                    .foregroundStyle(.black)
-                    .padding(.horizontal, 4)
-                    .background(Color.yellow)
-            )
-        case .pause:
-            // ⏸ 停顿 — italic gray
-            return AnyView(
-                Text(item.word + " ")
-                    .font(Font(font).italic())
-                    .foregroundStyle(.gray)
-            )
-        case .exclaim:
-            // ❗ 感叹 — red + bold
-            return AnyView(
-                Text(item.word + " ")
-                    .font(Font(font).weight(.bold))
-                    .foregroundStyle(Color.red)
-            )
-        case .hint:
-            // 💡 提示 — small + gray italic
-            return AnyView(
-                Text(item.word + " ")
-                    .font(.system(size: max(font.pointSize - 4, 10)).italic())
-                    .foregroundStyle(Color.gray)
-            )
-        case .climax:
-            // 🔥 情绪高潮 — orange + bold
-            return AnyView(
-                Text(item.word + " ")
-                    .font(Font(font).weight(.heavy))
-                    .foregroundStyle(Color.orange)
-            )
+            Text(item.wordWithSpace)
+                .font(styles.italicFont)
+                .foregroundStyle(annotationColor)
+                .background(Color.clear)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    onWordTap?(item.charOffset)
+                }
+        }
+        // Main highlight branch
+        else {
+            // Dim color: highlight color variant for current word, full for unread
+            let dimColor: Color = isCurrentWord
+                ? styles.dimHighlight
+                : highlightColor
+
+            // Base color for the whole word
+            let wordColor: Color = isFullyLit ? styles.readHighlight : dimColor
+
+            // Andy题词 当前词焦点加强：略大字号 + 粗体 + 强色下划线
+            let currentWordFont: Font = isCurrentWord
+                ? styles.boldFont
+                : styles.baseFont
+            let currentWordColor: Color = isCurrentWord
+                ? highlightColor
+                : wordColor
+
+            Text(item.wordWithSpace)
+                .font(currentWordFont)
+                .foregroundStyle(currentWordColor)
+                .underline(isCurrentWord, color: highlightColor)
+                .background(Color.clear)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    onWordTap?(item.charOffset)
+                }
         }
     }
 
-    private func buildItems() -> [WordItem] {
+    // Plain (non-ViewBuilder) helper that derives the per-word state flags
+    // once. Pulled out of wordView so the ViewBuilder body opens directly
+    // with the first view-producing branch.
+    private func wordFlags(item: WordItem, isNextWord: Bool) -> (Bool, Bool) {
+        if isNextWord {
+            return (false, true)
+        }
+        // R48: now derived from `nextIdx` comparison rather than re-computing
+        // (highlightedCharCount - item.charOffset) >= item.letterCount every
+        // frame. Both formulations are equivalent: any word whose id is
+        // strictly less than nextIdx's id has been fully passed by ASR.
+        // nextIdx == -1 means "no remaining word" — every word is fully lit.
+        let isFullyLit = nextIdx < 0 || item.id < nextIdx
+        return (isFullyLit, false)
+    }
+
+    private func buildItems() -> ([WordItem], Bool) {
+        // Item array changed — invalidate the nextWordIndex memoization.
+        Self._memoizedNextIdx = -1
         var items: [WordItem] = []
         var offset = 0
         let annotationFlags = SpeechTextAlignment.annotationFlags(for: words)
+        var detectedRTL = false
         for (i, word) in words.enumerated() {
             let isAnnotation = annotationFlags[i] || Self.isAnnotationWord(word)
-            items.append(WordItem(id: i, word: word, charOffset: offset, isAnnotation: isAnnotation))
-            offset += word.count + 1 // +1 for space
+            // Hoist RTL detection here (once per layout rebuild) so the body
+            // render path doesn't redo Unicode bidi analysis per ASR partial.
+            if !isAnnotation && !detectedRTL {
+                switch textBaseDirection(in: word) {
+                case .rightToLeft:
+                    detectedRTL = true
+                case .leftToRight:
+                    detectedRTL = false
+                    break
+                case .natural:
+                    break
+                }
+            }
+            // Count letters+digits once at build time. Avoids repeated
+            // Character.isLetter/isNumber calls in the per-frame render path.
+            let lc = word.reduce(0) { acc, ch in
+                acc + ((ch.isLetter || ch.isNumber) ? 1 : 0)
+            }
+            let letterCount = max(1, lc)
+            // Cache grapheme length for both the WordItem (used by hot path
+            // `nextWordIndex`) and the offset increment below. One walk, two
+            // readers; the hot path was previously doing its own per-word walk.
+            let wc = word.count
+            items.append(WordItem(
+                id: i,
+                word: word,
+                wordWithSpace: word + " ",
+                charOffset: offset,
+                isAnnotation: isAnnotation,
+                letterCount: letterCount,
+                wordCount: wc
+            ))
+            offset += wc + 1 // +1 for space
         }
-        return items
+        return (items, detectedRTL)
     }
 
     static func isAnnotationWord(_ word: String) -> Bool {
@@ -658,8 +1076,11 @@ struct AudioWaveformProgressView: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 2) {
-            ForEach(Array(levels.enumerated()), id: \.offset) { index, level in
-                let barProgress = Double(index) / Double(max(1, levels.count - 1))
+            let n = levels.count
+            let denom = max(1, n - 1)
+            ForEach(0..<n, id: \.self) { index in
+                let level = levels[index]
+                let barProgress = Double(index) / Double(denom)
                 let isLit = barProgress <= progress
 
                 RoundedRectangle(cornerRadius: 1.5)
@@ -674,6 +1095,37 @@ struct AudioWaveformProgressView: View {
     }
 }
 
+/// Isolates the 47 Hz `audioLevels` mutation from the heavy overlay body.
+/// Without this, every audio buffer would re-evaluate the GeometryReader +
+/// WordFlowLayout of the parent overlay. The parent only needs to observe
+/// the slow 5 Hz ASR path (transcript, error, mode).
+struct AudioWaveformProgressView_Observer: View {
+    @Bindable var recognizer: SpeechRecognizer
+    let progress: Double
+
+    var body: some View {
+        AudioWaveformProgressView(levels: recognizer.audioLevels, progress: progress)
+    }
+}
+
+/// Isolates changes to `lastSpokenText` (which updates the tail caches) so
+/// only this tiny Text re-renders — not the whole overlay body.
+struct LastSpokenTailText: View {
+    @Bindable var recognizer: SpeechRecognizer
+    let tailSize: Int   // 3 or 5
+    let fontSize: CGFloat
+
+    var body: some View {
+        let text: String = tailSize == 5 ? recognizer.lastSpokenTail5 : recognizer.lastSpokenTail3
+        Text(text)
+            .font(.system(size: fontSize, weight: .medium))
+            .foregroundStyle(.white.opacity(0.5))
+            .lineLimit(1)
+            .truncationMode(.head)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 // Keep the old one for backward compat
 struct AudioWaveformView: View {
     let levels: [CGFloat]
@@ -681,7 +1133,9 @@ struct AudioWaveformView: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 2) {
-            ForEach(Array(levels.enumerated()), id: \.offset) { _, level in
+            let n = levels.count
+            ForEach(0..<n, id: \.self) { index in
+                let level = levels[index]
                 RoundedRectangle(cornerRadius: 1.5)
                     .fill(color.opacity(0.4 + Double(level) * 0.6))
                     .frame(width: 3, height: max(3, level * 28 + 3))

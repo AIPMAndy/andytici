@@ -7,6 +7,7 @@
 
 import Foundation
 import Network
+import CoreGraphics
 
 // MARK: - Director State (App → Web)
 
@@ -20,7 +21,11 @@ struct DirectorState: Codable {
     let fontColor: String
     let cueColor: String
     let lastSpokenText: String
-    let audioLevels: [Double]
+    // CGFloat (== Double on arm64) eliminates the per-tick
+    // `(speechRecognizer?.audioLevels ?? []).map { Double($0) }` allocation
+    // in broadcastCurrentState. JSONEncoder emits the same numeric byte
+    // stream either way. (R37)
+    let audioLevels: [CGFloat]
 }
 
 // MARK: - Director Command (Web → App)
@@ -54,6 +59,40 @@ class DirectorServer {
     private weak var speechRecognizer: SpeechRecognizer?
     private var contentActive: Bool = false
     private var lastBroadcastState: Data?
+    // Cached JSONEncoder: 10Hz broadcast loop was allocating a fresh encoder
+    // each tick. Reuse one instance. (R33)
+    private let jsonEncoder = JSONEncoder()
+    // R40: pre-encode cheap signature — same pattern as BrowserServer.
+    // Skips the encoder entirely on idle ticks when no user-visible field
+    // changed since the last tick.
+    private var lastSigCharCount: Int = -1
+    private var lastSigIsDone: Bool = false
+    private var lastSigIsListening: Bool = false
+    private var lastSigLastSpoken: String = ""
+    private var lastSigAudioCount: Int = -1
+    private var lastSigAudioLast: CGFloat = 0
+
+    private func cheapSignatureChanged(
+        highlightedCharCount: Int, isDone: Bool, isListening: Bool,
+        lastSpokenText: String, audioLevels: [CGFloat]
+    ) -> Bool {
+        if highlightedCharCount != lastSigCharCount { return true }
+        if isDone != lastSigIsDone { return true }
+        if isListening != lastSigIsListening { return true }
+        if lastSpokenText != lastSigLastSpoken { return true }
+        if audioLevels.count != lastSigAudioCount { return true }
+        if let tail = audioLevels.last, tail != lastSigAudioLast { return true }
+        return false
+    }
+
+    private func cacheSignature(_ state: DirectorState) {
+        lastSigCharCount = state.highlightedCharCount
+        lastSigIsDone = state.isDone
+        lastSigIsListening = state.isListening
+        lastSigLastSpoken = state.lastSpokenText
+        lastSigAudioCount = state.audioLevels.count
+        lastSigAudioLast = state.audioLevels.last ?? 0
+    }
 
     // Callbacks
     var onSetText: ((String) -> Void)?
@@ -275,7 +314,7 @@ class DirectorServer {
             fontColor: NotchSettings.shared.fontColorPreset.cssColor,
             cueColor: NotchSettings.shared.cueColorPreset.cssColor,
             lastSpokenText: speechRecognizer?.lastSpokenText ?? "",
-            audioLevels: (speechRecognizer?.audioLevels ?? []).map { Double($0) }
+            audioLevels: speechRecognizer?.audioLevels ?? []
         )
         broadcast(state)
     }
@@ -291,11 +330,31 @@ class DirectorServer {
     }
 
     private func broadcast(_ state: DirectorState) {
-        guard !wsConnections.isEmpty, let data = try? JSONEncoder().encode(state) else { return }
+        guard !wsConnections.isEmpty else { return }
+        // R40: cheap pre-encode dedup.
+        if !cheapSignatureChanged(
+            highlightedCharCount: state.highlightedCharCount,
+            isDone: state.isDone,
+            isListening: state.isListening,
+            lastSpokenText: state.lastSpokenText,
+            audioLevels: state.audioLevels
+        ) {
+            return
+        }
+        let data: Data
+        do {
+            data = try jsonEncoder.encode(state)
+        } catch {
+            return
+        }
 
         // Skip broadcast if state hasn't changed
-        if let last = lastBroadcastState, last == data { return }
+        if let last = lastBroadcastState, last == data {
+            cacheSignature(state)
+            return
+        }
         lastBroadcastState = data
+        cacheSignature(state)
 
         let connections = wsConnections.filter { authenticatedConnections.contains(ObjectIdentifier($0)) }
         guard !connections.isEmpty else { return }

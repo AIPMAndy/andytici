@@ -169,6 +169,11 @@ struct ContentView: View {
     // How many chars of the raw recognition result to skip (already committed before cursor move)
     @State private var spokenSkipOffset: Int = 0
     @State private var lastRawSpokenLength: Int = 0
+    // True after the user manually moves the editor caret or scrolls away from
+    // the ASR-tracked position. When true, ASR partials no longer overwrite the
+    // text or force the caret back to its inferred position — the user is in
+    // control. Reset when the user types again or stops recording.
+    @State private var userManualOverride: Bool = false
 
     private func beginNewSegment() {
         let pageIndex = service.currentPageIndex
@@ -189,17 +194,23 @@ struct ContentView: View {
     private func startRecording() {
         lastRawSpokenLength = 0
         spokenSkipOffset = 0
+        userManualOverride = false
         beginNewSegment()
 
         dictation.onNewSegment = { [self] in
             // Recognition restarted — raw counter resets to 0
             lastRawSpokenLength = 0
             spokenSkipOffset = 0
+            userManualOverride = false
             beginNewSegment()
         }
 
         dictation.onTextUpdate = { [self] spokenText in
+            // Track raw length regardless of override so resume-from-pause still works.
             lastRawSpokenLength = spokenText.count
+            // User has taken control (clicked elsewhere / scrolled). Don't let ASR
+            // partials overwrite their text or steal the caret.
+            guard !userManualOverride else { return }
 
             // Only use the portion after the skip offset
             let effectiveText: String
@@ -255,6 +266,7 @@ struct ContentView: View {
         highlightClearTimer?.invalidate()
         highlightClearTimer = nil
         dictationHighlightRange = nil
+        userManualOverride = false
         dictation.stop()
         dictation.onTextUpdate = nil
         dictation.onNewSegment = nil
@@ -273,13 +285,17 @@ struct ContentView: View {
                     font: .systemFont(ofSize: 16, weight: .regular).rounded,
                     highlightRange: dictationHighlightRange,
                     caretPosition: $dictationCaretPosition,
-                    editorCaretPosition: $editorCaretPosition
+                    editorCaretPosition: $editorCaretPosition,
+                    onUserEdit: { userManualOverride = false }
                 )
                 .onChange(of: editorCaretPosition) { _, newPos in
                     guard isRecording else { return }
-                    // If caret moved away from end of current segment, user clicked elsewhere
+                    // If caret moved away from end of current segment, the user clicked
+                    // or scrolled to a different position. Hand control back: ASR will
+                    // stop overwriting text/selection until the user types again.
                     let segmentEnd = segmentStart + segmentLength
                     if newPos != segmentEnd {
+                        userManualOverride = true
                         beginNewSegment()
                     }
                 }

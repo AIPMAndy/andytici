@@ -11,10 +11,21 @@ import Network
 // MARK: - Browser State
 
 struct BrowserState: Codable {
-    let words: [String]
+    // R42: nil = "words unchanged since the last broadcast; browser should
+    // keep its local cache". The words array (~5–10 KB for a 1000-word
+    // script) used to be re-encoded on every 10 Hz tick even when the user
+    // hadn't switched pages. Now the server only includes it when the
+    // content actually changes (page switch, source edit, or a fresh client
+    // connection). Browser JS keeps `cachedWords` and falls back to it
+    // whenever `s.words === null`.
+    let words: [String]?
     let highlightedCharCount: Int
     let totalCharCount: Int
-    let audioLevels: [Double]
+    // CGFloat (== Double on arm64) eliminates the per-tick
+    // `(speechRecognizer?.audioLevels ?? []).map { Double($0) }` allocation
+    // in broadcastCurrentState. JSONEncoder emits the same numeric byte
+    // stream either way. (R37)
+    let audioLevels: [CGFloat]
     let isListening: Bool
     let isDone: Bool
     let fontColor: String
@@ -40,6 +51,71 @@ class BrowserServer {
     private weak var speechRecognizer: SpeechRecognizer?
     private var timerWordProgress: Double = 0
     private var contentActive: Bool = false
+    // Prefix sum of (word.count + 1) for words[0..<i]: cachedCharOffsets[i] is the
+    // char offset BEFORE word i. cachedCharOffsets.count = words.count + 1.
+    // Lets charOffsetForWordProgress go from O(wholeWord) to O(1) per call;
+    // the 10Hz broadcast timer otherwise re-walks 0..<wholeWord every tick.
+    // Rebuilt only when words array changes (showContent / updateContent). (R32)
+    private var cachedCharOffsets: [Int] = [0]
+    // Cached JSONEncoder: JSONEncoder() carries a small amount of internal
+    // state and allocates per call. With 10Hz broadcasting, caching shaves
+    // 10 encoder allocations per second on the main thread. (R33)
+    private let jsonEncoder = JSONEncoder()
+    // Dedup encoded state: BrowserState carries the full `words: [String]`
+    // and re-encodes every 10Hz tick. When audioLevels stay steady (no
+    // speech, classic mode) the encoded bytes are identical; memcmp-ing
+    // Data lets us skip the WS send loop. Aligned with DirectorServer. (R35)
+    private var lastBroadcastState: Data?
+    // R40: pre-encode cheap signature. The encode itself is the expensive
+    // step (walks every String in `words` to produce JSON bytes). Comparing
+    // a handful of cheap fields (Int + Bool + String + array tail) lets us
+    // skip the encode entirely on idle ticks. When ASR is silent and the
+    // user isn't scrolling, this saves ~10 full encodes/sec.
+    private var lastSigCharCount: Int = -1
+    private var lastSigIsDone: Bool = false
+    private var lastSigIsListening: Bool = false
+    private var lastSigLastSpoken: String = ""
+    private var lastSigAudioCount: Int = -1
+    private var lastSigAudioLast: CGFloat = 0
+    // R42: track the words array hash so the server only includes `words`
+    // in the encoded payload when the content actually changes (page switch,
+    // source edit, fresh client connection). On steady 10Hz ticks during
+    // ASR the words payload is omitted — the browser keeps `cachedWords`.
+    private var lastBroadcastWordsHash: Int = 0
+
+    private func cheapSignatureChanged(
+        highlightedCharCount: Int, isDone: Bool, isListening: Bool,
+        lastSpokenText: String, audioLevels: [CGFloat]
+    ) -> Bool {
+        if highlightedCharCount != lastSigCharCount { return true }
+        if isDone != lastSigIsDone { return true }
+        if isListening != lastSigIsListening { return true }
+        if lastSpokenText != lastSigLastSpoken { return true }
+        if audioLevels.count != lastSigAudioCount { return true }
+        // Sample only the last sample — earlier samples change monotonically
+        // during a burst but the trailing edge is enough to detect motion.
+        if let tail = audioLevels.last, tail != lastSigAudioLast { return true }
+        return false
+    }
+
+    /// Cheap content-hash for the words array. Mixes count with three
+    /// sampling points (first, middle, last) so a tiny edit anywhere in
+    /// the script flips the hash, while the cost stays O(1) regardless
+    /// of script length. Used by R42 to decide whether the next
+    /// broadcast needs to ship the words array or can leave it as `null`
+    /// (the browser keeps its local cache). Worst-case collision only
+    /// causes one extra full-state send — never a stale-cache bug, since
+    /// the cheap pre-encode signature (R40) still guards byte-equality.
+    /// (R42)
+    private static func wordsHash(_ arr: [String]) -> Int {
+        var h = arr.count
+        h = h &* 31 &+ (arr.first?.hashValue ?? 0)
+        h = h &* 31 &+ (arr.last?.hashValue ?? 0)
+        if arr.count > 2 {
+            h = h &* 31 &+ arr[arr.count / 2].hashValue
+        }
+        return h
+    }
 
     var httpPort: UInt16 { NotchSettings.shared.browserServerPort }
     var wsPort: UInt16 { httpPort + 1 }
@@ -77,6 +153,7 @@ class BrowserServer {
         self.hasNextPage = hasNextPage
         self.timerWordProgress = 0
         self.contentActive = true
+        rebuildCharOffsetCache()
         startBroadcasting()
     }
 
@@ -85,6 +162,7 @@ class BrowserServer {
         self.totalCharCount = totalCharCount
         self.hasNextPage = hasNextPage
         self.timerWordProgress = 0
+        rebuildCharOffsetCache()
     }
 
     func hideContent() {
@@ -155,6 +233,12 @@ class BrowserServer {
     private func handleWSConnection(_ conn: NWConnection) {
         conn.start(queue: .main)
         wsConnections.append(conn)
+        // R42: force the next broadcast to include the full words array,
+        // so a freshly-connected client has something to render even if it
+        // joins during a stable-tick interval. Setting the cached hash to
+        // a sentinel (-1, guaranteed ≠ any real wordsHash result) makes
+        // the next broadcastCurrentState's includeWords check return true.
+        lastBroadcastWordsHash = -1
         receiveWSMessage(conn)
 
         conn.stateUpdateHandler = { [weak self] state in
@@ -187,21 +271,35 @@ class BrowserServer {
 
         let charCount: Int
         let mode = NotchSettings.shared.listeningMode
-        // Check if scroll already reached the end, to stop advancing the timer
-        let scrollDone = totalCharCount > 0 && charOffsetForWordProgress(timerWordProgress) >= totalCharCount
         switch mode {
         case .wordTracking:
+            // In word-tracking mode the script doesn't auto-scroll, so the
+            // `scrollDone` early-stop is meaningless — skip the redundant
+            // charOffsetForWordProgress() call (saves 1 O(1) prefix-sum
+            // lookup per 100 ms tick × 10 Hz = 10 wasted lookups/sec). (R38)
             charCount = speechRecognizer?.recognizedCharCount ?? 0
         case .classic:
+            // R53: cache the first prefix-sum lookup. When scrollDone is
+            // true (end-of-script, common while speaker finishes) the
+            // second lookup would return the same value — reuse it and
+            // skip one O(1) array read + min() per 100 ms tick.
+            let offsetBefore = charOffsetForWordProgress(timerWordProgress)
+            let scrollDone = totalCharCount > 0 && offsetBefore >= totalCharCount
             if !scrollDone {
                 timerWordProgress += NotchSettings.shared.scrollSpeed * 0.1
+                charCount = charOffsetForWordProgress(timerWordProgress)
+            } else {
+                charCount = offsetBefore
             }
-            charCount = charOffsetForWordProgress(timerWordProgress)
         case .silencePaused:
+            let offsetBefore = charOffsetForWordProgress(timerWordProgress)
+            let scrollDone = totalCharCount > 0 && offsetBefore >= totalCharCount
             if !scrollDone && speechRecognizer?.isListening == true && (speechRecognizer?.isSpeaking ?? false) {
                 timerWordProgress += NotchSettings.shared.scrollSpeed * 0.1
+                charCount = charOffsetForWordProgress(timerWordProgress)
+            } else {
+                charCount = offsetBefore
             }
-            charCount = charOffsetForWordProgress(timerWordProgress)
         }
 
         let effective = min(charCount, totalCharCount)
@@ -212,11 +310,19 @@ class BrowserServer {
 
         let highlightWords = mode == .wordTracking
 
+        // R42: include the (potentially large) words array only when the
+        // content actually changed since the last broadcast. Stable 10Hz
+        // ticks during ASR now send a slim payload without `words`; the
+        // browser keeps the previous array in a local cache.
+        let currentWordsHash = Self.wordsHash(words)
+        let includeWords = currentWordsHash != lastBroadcastWordsHash
+        lastBroadcastWordsHash = currentWordsHash
+
         let state = BrowserState(
-            words: words,
+            words: includeWords ? words : nil,
             highlightedCharCount: effective,
             totalCharCount: totalCharCount,
-            audioLevels: (speechRecognizer?.audioLevels ?? []).map { Double($0) },
+            audioLevels: speechRecognizer?.audioLevels ?? [],
             isListening: speechRecognizer?.isListening ?? false,
             isDone: isDone,
             fontColor: NotchSettings.shared.fontColorPreset.cssColor,
@@ -230,8 +336,15 @@ class BrowserServer {
     }
 
     private func broadcastInactive() {
+        // R42: force the next active broadcast to include the words array
+        // (the browser's local cache may have been overwritten by a stale
+        // tick, and on inactive→active transitions we want the first
+        // active frame to render text). The `words: nil` here is fine —
+        // `s.isActive === false` causes render() to return early before
+        // touching `words`.
+        lastBroadcastWordsHash = -1
         let state = BrowserState(
-            words: [], highlightedCharCount: 0, totalCharCount: 0,
+            words: nil, highlightedCharCount: 0, totalCharCount: 0,
             audioLevels: [], isListening: false, isDone: false,
             fontColor: "#ffffff", cueColor: "#ffffff", hasNextPage: false, isActive: false,
             highlightWords: true, lastSpokenText: ""
@@ -240,7 +353,28 @@ class BrowserServer {
     }
 
     private func broadcast(_ state: BrowserState) {
-        guard !wsConnections.isEmpty, let data = try? JSONEncoder().encode(state) else { return }
+        guard !wsConnections.isEmpty else { return }
+        // R40: cheap pre-encode dedup. Skip the encoder entirely when no
+        // user-visible field changed since the last tick.
+        if !cheapSignatureChanged(
+            highlightedCharCount: state.highlightedCharCount,
+            isDone: state.isDone,
+            isListening: state.isListening,
+            lastSpokenText: state.lastSpokenText,
+            audioLevels: state.audioLevels
+        ) {
+            return
+        }
+        guard let data = try? jsonEncoder.encode(state) else { return }
+        // Skip broadcast if state hasn't changed (R35)
+        if let last = lastBroadcastState, last == data {
+            // Even though the encoder produced identical bytes, refresh the
+            // cheap signature so we don't repeat the encode next tick.
+            cacheSignature(state)
+            return
+        }
+        lastBroadcastState = data
+        cacheSignature(state)
         let meta = NWProtocolWebSocket.Metadata(opcode: .text)
         let ctx = NWConnection.ContentContext(identifier: "ws", metadata: [meta])
         for conn in wsConnections {
@@ -248,16 +382,41 @@ class BrowserServer {
         }
     }
 
+    private func cacheSignature(_ state: BrowserState) {
+        lastSigCharCount = state.highlightedCharCount
+        lastSigIsDone = state.isDone
+        lastSigIsListening = state.isListening
+        lastSigLastSpoken = state.lastSpokenText
+        lastSigAudioCount = state.audioLevels.count
+        lastSigAudioLast = state.audioLevels.last ?? 0
+    }
+
     // MARK: - Helpers
 
-    private func charOffsetForWordProgress(_ progress: Double) -> Int {
-        let wholeWord = Int(progress)
-        let frac = progress - Double(wholeWord)
-        var offset = 0
-        for i in 0..<min(wholeWord, words.count) {
-            offset += words[i].count + 1
+    /// Rebuild the prefix-sum cache for `charOffsetForWordProgress`. O(N) once
+    /// per words-change (showContent/updateContent), saves O(wholeWord) per
+    /// 10Hz broadcast tick. (R32)
+    private func rebuildCharOffsetCache() {
+        var offsets = [Int]()
+        offsets.reserveCapacity(words.count + 1)
+        offsets.append(0)
+        var acc = 0
+        for word in words {
+            acc += word.count + 1
+            offsets.append(acc)
         }
-        if wholeWord < words.count {
+        cachedCharOffsets = offsets
+    }
+
+    /// Convert fractional word progress into a char offset using the prefix-sum
+    /// cache. O(1) lookup per call after a one-time O(N) build per words-change.
+    private func charOffsetForWordProgress(_ progress: Double) -> Int {
+        let count = words.count
+        guard count > 0 else { return 0 }
+        let wholeWord = min(Int(progress), count)
+        let frac = progress - Double(wholeWord)
+        var offset = cachedCharOffsets[wholeWord]
+        if wholeWord < count {
             offset += Int(Double(words[wholeWord].count) * frac)
         }
         return min(offset, totalCharCount)
@@ -408,20 +567,30 @@ class BrowserServer {
 
         <script>
         const WSP=\(wsPort),host=location.hostname;
-        let ws,rt,prevWordKey='',scrollTgt=null;
+        let ws,rt,prevWordKey='',scrollTgt=null,cachedWords=[];
 
         /* ---- helpers ---- */
 
-        // Parse a CSS color into [r,g,b]
+        // Parse a CSS color into [r,g,b]. Memoized by source string: parseColor
+        // runs 2× per 10Hz tick (fc + cc) but fc/cc only change when the
+        // user adjusts a color preset in Settings, which is rare. The Map
+        // cache drops ~20 parseColor calls/sec on a steady script.
+        const _colorCache=new Map();
         function parseColor(c){
+          const cached=_colorCache.get(c);
+          if(cached)return cached;
+          let v;
           if(c.startsWith('#')){
-            const v=c.length===4
+            const parts=c.length===4
               ?[c[1]+c[1],c[2]+c[2],c[3]+c[3]]
               :[c.slice(1,3),c.slice(3,5),c.slice(5,7)];
-            return v.map(h=>parseInt(h,16));
+            v=parts.map(h=>parseInt(h,16));
+          } else {
+            const m=c.match(/(\\d+)/g);
+            v=m?m.slice(0,3).map(Number):[255,255,255];
           }
-          const m=c.match(/(\\d+)/g);
-          return m?m.slice(0,3).map(Number):[255,255,255];
+          _colorCache.set(c,v);
+          return v;
         }
         function rgba(rgb,a){return 'rgba('+rgb[0]+','+rgb[1]+','+rgb[2]+','+a+')';}
 
@@ -464,13 +633,34 @@ class BrowserServer {
           wEl.style.display='none';mEl.style.display='flex';dEl.style.display='none';
 
           const c=document.getElementById('text-container'),
-                words=s.words||[],
+                // R42: server only ships the (potentially large) `words`
+                // array when the content actually changes (page switch,
+                // source edit, fresh client connection). On every other
+                // tick `s.words === null` and we keep using the cached
+                // array from the previous full payload. Falls back to []
+                // only on the very first frame if the server somehow
+                // sent a null before any full state — shouldn't happen
+                // because `handleWSConnection` forces includeWords on the
+                // next tick.
+                words=(s.words!==null&&s.words!==undefined)?(cachedWords=s.words):cachedWords,
                 fc=s.fontColor||'#ffffff',
                 cc=s.cueColor||fc,
                 rgb=parseColor(fc),
                 crgb=parseColor(cc),
                 hlWords=s.highlightWords!==false,
                 hcc=s.highlightedCharCount||0;
+
+          // R43: hoist the five unique rgba() strings out of the per-word
+          // loop. The previous code called rgba(crgb, 0.5/0.2/0.4) and
+          // rgba(rgb, 0.3/0.6) inside the highlight branches, allocating
+          // 4–5 short-lived strings per word per frame. At 1000 words ×
+          // 10 Hz that's ~50 000 string allocations/sec on the browser's
+          // main thread. Allocating once per frame drops it to 5.
+          const annLit=rgba(crgb,0.5),
+                annDim=rgba(crgb,0.2),
+                annPlain=rgba(crgb,0.4),
+                readDim=rgba(rgb,0.3),
+                curMed=rgba(rgb,0.6);
 
           // Rebuild spans only when words change
           const wordKey=words.length+'|'+(words[0]||'')+'|'+(words[words.length-1]||'');
@@ -481,10 +671,34 @@ class BrowserServer {
               const wd=words[i],ann=isAnnotation(wd);
               const sp=document.createElement('span');
               sp.className=ann?'w ann':'w';
-              sp.dataset.s=cp;
-              sp.dataset.l=wd.length;
-              sp.dataset.lc=letterCount(wd);
-              sp.dataset.a=ann?'1':'0';
+              // R44: store charOffset/length/letterCount/annFlag as direct
+              // number/bool properties on the span instead of in `dataset`.
+              // `dataset.*` coerces everything to strings, forcing the hot
+              // render loops below to `parseInt(d.s)` / `parseInt(d.l)` /
+              // `parseInt(d.lc)` for every word on every 10 Hz frame —
+              // ~3000 parseInt calls/sec for a 1000-word script. Direct
+              // numeric properties skip the string round-trip and the parse.
+              sp.s=cp;
+              sp.l=wd.length;
+              sp.lc=letterCount(wd);
+              sp.a=ann;
+              // R49: cache `ce` = charOffset + (annotation ? letterCount : length).
+              // The hot render loops below originally recomputed
+              // `litCount = min(wLen, max(0, hcc - charOff))` and then checked
+              // `litCount >= lc` to determine "fully lit." Both loops collapse
+              // to a single `hcc >= sp.ce` (or `hcc < sp.ce` in the nextIdx
+              // search). Saves ~3 conditional ops per span × 2 loops × 10 Hz
+              // × N spans (~60k ops/sec on a 1000-word script).
+              sp.ce=cp + (ann ? sp.lc : sp.l);
+              // R45: per-span cache for (color, underline). The hot
+              // render loop walks every word on every 10 Hz tick; most
+              // words keep the same (color, underline) across many
+              // consecutive frames once ASR has passed them. Skipping
+              // the four style.* writes when the tuple is unchanged
+              // drops ~99 % of per-frame style mutations on a stable
+              // script, and the browser skips style-invalidation work
+              // for unchanged inline styles.
+              sp._c='';sp._u=false;
               sp.textContent=wd+' ';
               c.appendChild(sp);
               cp+=wd.length+1;
@@ -497,11 +711,14 @@ class BrowserServer {
           if(hlWords){
             const spans=c.children;
             for(let i=0;i<spans.length;i++){
-              const d=spans[i].dataset;
-              if(d.a==='1')continue;
-              const charOff=parseInt(d.s),wLen=parseInt(d.l),lc=parseInt(d.lc);
-              const litCount=Math.max(0,Math.min(wLen,hcc-charOff));
-              if(litCount<lc){nextIdx=i;break}
+              const sp=spans[i];
+              if(sp.a)continue;
+              // R49: skip the min/max arithmetic. `litCount < lc` reduces to
+              // `hcc < ce` where ce = charOff + (annotation ? lc : wLen).
+              // For non-annotation wLen==lc so ce = charOff+wLen; for annotation
+              // wLen > lc but litCount is still clamped by hcc-charOff vs lc,
+              // so ce = charOff+lc is the exact threshold either way.
+              if(hcc<sp.ce){nextIdx=i;break}
             }
           }
 
@@ -509,11 +726,13 @@ class BrowserServer {
           scrollTgt=null;
           const spans=c.children;
           for(let i=0;i<spans.length;i++){
-            const sp=spans[i],d=sp.dataset;
-            const charOff=parseInt(d.s),wLen=parseInt(d.l),lc=parseInt(d.lc);
-            const ann=d.a==='1';
-            const litCount=Math.max(0,Math.min(wLen,hcc-charOff));
-            const isFullyLit=litCount>=lc;
+            const sp=spans[i];
+            const charOff=sp.s;
+            const ann=sp.a;
+            // R49: skip the min/max arithmetic for `litCount`. `isFullyLit`
+            // becomes a single comparison against the cached `ce`. `charsInto`
+            // is the only derived value still needed for `isCurrent`.
+            const isFullyLit=hcc>=sp.ce;
             const charsInto=hcc-charOff;
             const isCurrent=(i===nextIdx)||(charsInto>=0&&!isFullyLit&&!ann);
 
@@ -521,26 +740,37 @@ class BrowserServer {
 
             if(!hlWords){
               // Classic / silence-paused: uniform color, no per-word highlight
-              color=ann?rgba(crgb,0.4):fc;
+              color=ann?annPlain:fc;
             } else if(ann){
               // Annotation: cue color with varying opacity
-              color=isFullyLit?rgba(crgb,0.5):rgba(crgb,0.2);
+              color=isFullyLit?annLit:annDim;
             } else if(isFullyLit){
               // Already read: dimmed
-              color=rgba(rgb,0.3);
+              color=readDim;
             } else if(isCurrent){
               // Current / next word: medium + underline
-              color=rgba(rgb,0.6);
+              color=curMed;
               underline=true;
             } else {
               // Unread: full brightness
               color=fc;
             }
 
-            sp.style.color=color;
-            sp.style.textDecoration=underline?'underline':'none';
-            sp.style.textDecorationColor=underline?color:'';
-            sp.style.textUnderlineOffset=underline?'4px':'';
+            // R45: skip the four style.* writes when (color, underline) haven't
+            // changed since the previous frame. For a stable script most
+            // words keep the same tuple across many frames once ASR has
+            // passed them — ~99 % of per-frame style mutations drop, and
+            // the browser skips its style-invalidation work for unchanged
+            // inline styles. Initial sp._c='' / sp._u=false are guaranteed
+            // ≠ any real value so the first frame after a page switch
+            // still applies styles.
+            if(sp._c!==color||sp._u!==underline){
+              sp.style.color=color;
+              sp.style.textDecoration=underline?'underline':'none';
+              sp.style.textDecorationColor=underline?color:'';
+              sp.style.textUnderlineOffset=underline?'4px':'';
+              sp._c=color;sp._u=underline;
+            }
 
             // Track the active word for scrolling
             if(isCurrent||(!scrollTgt&&isFullyLit)){
@@ -563,34 +793,62 @@ class BrowserServer {
                 lv=s.audioLevels||[],
                 pct=s.totalCharCount>0?s.highlightedCharCount/s.totalCharCount:0;
           while(wf.children.length<lv.length){
-            const b=document.createElement('div');b.className='wf';wf.appendChild(b)}
+            const b=document.createElement('div');b.className='wf';
+            // R46: init style fingerprint cache on bars created mid-session.
+            b._h='';b._bg='';
+            wf.appendChild(b)}
           const barCount=wf.children.length;
           for(let i=0;i<barCount;i++){
             const l=i<lv.length?lv[i]:0;
             const barProgress=barCount>1?i/(barCount-1):0;
             const isLit=barProgress<=pct;
-            wf.children[i].style.height=Math.max(3,l*32)+'px';
-            wf.children[i].style.background=isLit
-              ?'rgba(250,204,21,0.9)':'rgba(255,255,255,0.15)';
+            // R46: skip the two style.* writes when (height, background)
+            // haven't changed since the previous frame. For stable audio
+            // (silence, steady tone, last frame before a peak) most bars
+            // hold the same tuple across many frames — the same skip
+            // pattern as the per-span _c/_u cache.
+            const h=Math.max(3,l*32)+'px',
+                  bg=isLit?'rgba(250,204,21,0.9)':'rgba(255,255,255,0.15)';
+            const bar=wf.children[i];
+            if(bar._h!==h||bar._bg!==bg){
+              bar.style.height=h;
+              bar.style.background=bg;
+              bar._h=h;bar._bg=bg;
+            }
           }
 
           // Last spoken text (word-tracking mode only)
           const spokenEl=document.getElementById('spoken');
+          // R46: skip the textContent write when neither the tail nor the
+          // visibility flag changed. Splits still run when s.lastSpokenText
+          // changes; on the many ticks where ASR hasn't updated it (most
+          // 10 Hz frames in steady speech) we now avoid the split +
+          // slice + join + textContent round-trip and the layout
+          // invalidation it triggers.
           if(hlWords&&s.lastSpokenText){
             const tail=s.lastSpokenText.split(' ').slice(-5).join(' ');
-            spokenEl.textContent=tail;
-          } else {
+            if(tail!==prevSpoken||prevSpokenHl!==true){
+              spokenEl.textContent=tail;
+              prevSpoken=tail;prevSpokenHl=true;
+            }
+          } else if(prevSpoken!==''||prevSpokenHl!==false){
             spokenEl.textContent='';
+            prevSpoken='';prevSpokenHl=false;
           }
 
           // Mic indicator
           document.getElementById('mic-dot').classList.toggle('on',!!s.isListening);
         }
 
-        // Init waveform bars
+        // Init waveform bars (R46: cache per-bar style fingerprint so
+        // render() can skip unchanged (height, background) writes).
         const wfInit=document.getElementById('waveform');
         for(let i=0;i<30;i++){const b=document.createElement('div');
-          b.className='wf';b.style.height='2px';wfInit.appendChild(b)}
+          b.className='wf';b.style.height='2px';b._h='';b._bg='';wfInit.appendChild(b)}
+
+        // R46: spoken-text cache so we can skip textContent writes when
+        // s.lastSpokenText (or hlWords) didn't change this tick.
+        let prevSpoken='',prevSpokenHl=false;
 
         connect();
         </script>

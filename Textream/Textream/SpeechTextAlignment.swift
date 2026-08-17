@@ -43,29 +43,60 @@ enum SpeechTextAlignment {
         return ranges
     }
 
+    /// Cursor-based O(1)-amortized advance over sorted annotation ranges.
+    ///
+    /// `annotationRanges` is built by `annotationRanges(in:)` which appends
+    /// in openingIndex order, so ranges are sorted by lowerBound. During
+    /// normal ASR flow offsets only increase — a monotonic cursor over the
+    /// sorted ranges eliminates the per-call `first(where:)` linear scans.
+    /// `cursor` must be reset (set to 0) whenever `ranges` is rebuilt.
     static func advancePastAnnotations(
-        in text: String,
+        in chars: [Character],
         ranges: [Range<Int>],
-        from offset: Int
+        from offset: Int,
+        cursor: inout Int
     ) -> Int {
-        let characters = Array(text)
-        var current = max(0, min(offset, characters.count))
+        let charCount = chars.count
+        var current = max(0, min(offset, charCount))
+        let rangeCount = ranges.count
+        if rangeCount == 0 { return current }
+
+        // Clamp cursor into bounds; reset on backward jump (manual page jump,
+        // source edit that shifted annotations).
+        if cursor >= rangeCount {
+            cursor = rangeCount - 1
+        }
+        if cursor > 0, ranges[cursor].lowerBound > current {
+            cursor = 0
+        }
+
         var skippedAnnotation = false
 
-        while current < characters.count {
-            if let range = ranges.first(where: { $0.contains(current) }) {
-                current = range.upperBound
+        while current < charCount {
+            // Advance cursor past ranges whose upperBound is at or before
+            // current. O(1) amortized over the lifetime of a stream.
+            while cursor < rangeCount, ranges[cursor].upperBound <= current {
+                cursor += 1
+            }
+            if cursor < rangeCount, ranges[cursor].contains(current) {
+                current = ranges[cursor].upperBound
                 skippedAnnotation = true
                 continue
             }
 
             var next = current
-            while next < characters.count && characters[next].isWhitespace {
+            while next < charCount, chars[next].isWhitespace {
                 next += 1
             }
 
-            if let range = ranges.first(where: { $0.lowerBound == next }) {
-                current = range.upperBound
+            // Find range whose lowerBound is exactly `next` — cursor only
+            // moves forward, never restarts.
+            while cursor < rangeCount, ranges[cursor].lowerBound < next {
+                cursor += 1
+            }
+            if cursor < rangeCount, ranges[cursor].lowerBound == next {
+                current = ranges[cursor].upperBound
+                cursor += 1
                 skippedAnnotation = true
                 continue
             }

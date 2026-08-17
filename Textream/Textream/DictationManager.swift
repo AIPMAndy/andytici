@@ -248,9 +248,10 @@ class DictationManager {
             let level = CGFloat(min(rms * 5, 1.0))
 
             DispatchQueue.main.async {
+                // Amortized O(1) ring-trim instead of O(N) removeFirst.
                 self?.audioLevels.append(level)
                 if (self?.audioLevels.count ?? 0) > 40 {
-                    self?.audioLevels.removeFirst()
+                    self?.audioLevels.removeFirst((self?.audioLevels.count ?? 0) - 40)
                 }
             }
         }

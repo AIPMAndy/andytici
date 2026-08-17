@@ -35,6 +35,13 @@ class OverlayContent {
     var words: [String] = []
     var totalCharCount: Int = 0
     var hasNextPage: Bool = false
+    /// R52: prefix-sum of char offsets for O(1) word-progress → char-offset
+    /// lookups. `wordCharOffsets[i]` = sum of (words[0..<i].count + 1 each),
+    /// so `wordCharOffsets[0] == 0` and `wordCharOffsets[words.count] ==
+    /// totalCharCount`. Built once per page change; consumed by notch
+    /// overlay views' `charOffsetForWordProgress` (was O(N) per call, now
+    /// O(1)).
+    var wordCharOffsets: [Int] = []
 
     // Page picker
     var pageCount: Int = 1
@@ -42,6 +49,20 @@ class OverlayContent {
     var pagePreviews: [String] = []
     var showPagePicker: Bool = false
     var jumpToPageIndex: Int? = nil
+
+    /// R52: single entry point for updating words + totalCharCount so the
+    /// prefix sum stays in sync. Always use this instead of assigning
+    /// `words` and `totalCharCount` independently — otherwise the prefix
+    /// sum drifts and the O(1) charOffsetForWordProgress returns wrong values.
+    func setWords(_ newWords: [String], totalCharCount: Int) {
+        self.words = newWords
+        self.totalCharCount = totalCharCount
+        var offsets = [Int](repeating: 0, count: newWords.count + 1)
+        for i in 0..<newWords.count {
+            offsets[i + 1] = offsets[i] + newWords[i].count + 1 // +1 for space
+        }
+        self.wordCharOffsets = offsets
+    }
 }
 
 class NotchOverlayController: NSObject {
@@ -61,7 +82,13 @@ class NotchOverlayController: NSObject {
     private var stopButtonPanel: NSPanel?
     private var escMonitor: Any?
 
-    func show(text: String, hasNextPage: Bool = false, onComplete: (() -> Void)? = nil) {
+    func show(
+        text: String,
+        words: [String]? = nil,
+        totalCharCount: Int? = nil,
+        hasNextPage: Bool = false,
+        onComplete: (() -> Void)? = nil
+    ) {
         self.onComplete = onComplete
         self.onNextPage = {
             TextreamService.shared.advanceToNextPage()
@@ -70,10 +97,14 @@ class NotchOverlayController: NSObject {
         forceClose()
         observeDismiss()
 
-        // Populate overlay content
-        let normalized = splitTextIntoWords(text)
-        overlayContent.words = normalized
-        overlayContent.totalCharCount = normalized.joined(separator: " ").count
+        // Populate overlay content. Callers (TextreamService) may pass already-
+        // computed words/totalCharCount to avoid the O(N) splitTextIntoWords
+        // + O(N) reduce running 3× in sequence (overlay, ext display, browser).
+        let normalized = words ?? splitTextIntoWords(text)
+        let resolvedTotal = totalCharCount ?? (normalized.reduce(0) { $0 + $1.count } + max(0, normalized.count - 1))
+        // R52: route both `words` and `totalCharCount` through OverlayContent.setWords
+        // so the prefix sum stays in sync (used by O(1) charOffsetForWordProgress).
+        overlayContent.setWords(normalized, totalCharCount: resolvedTotal)
         overlayContent.hasNextPage = hasNextPage
 
         let settings = NotchSettings.shared
@@ -132,6 +163,14 @@ class NotchOverlayController: NSObject {
 
         overlayContent.words = normalized
         overlayContent.totalCharCount = normalized.joined(separator: " ").count
+        // R52: keep prefix sum in sync with the new words list (init from
+        // totalCharCount-derivation; the old `totalCharCount` was joined-
+        // separator-count which is consistent).
+        var prefix = [Int](repeating: 0, count: normalized.count + 1)
+        for i in 0..<normalized.count {
+            prefix[i + 1] = prefix[i] + normalized[i].count + 1
+        }
+        overlayContent.wordCharOffsets = prefix
         overlayContent.hasNextPage = hasNextPage
 
         let settings = NotchSettings.shared
@@ -652,7 +691,10 @@ struct NotchOverlayView: View {
     @State private var timerWordProgress: Double = 0
     @State private var isPaused: Bool = false
     @State private var isUserScrolling: Bool = false
-    private let scrollTimer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
+    // R50: throttled from 20Hz → 10Hz. 50 ms is overkill for scroll-position
+    // updates (eye perceives ~24Hz+ as smooth); 100 ms is indistinguishable
+    // but cuts body re-runs for NotchOverlayView in half in classic mode.
+    private let scrollTimer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
     // Auto next page countdown
     @State private var countdownRemaining: Int = 0
@@ -669,8 +711,22 @@ struct NotchOverlayView: View {
         NotchSettings.shared.listeningMode
     }
 
-    /// Convert fractional word index to char offset using actual word lengths
+    /// Convert fractional word index to char offset using actual word lengths.
+    /// R52: now O(1) via prefix sum (`content.wordCharOffsets`) instead of an
+    /// O(N) loop over `words`. content is shared OverlayContent; the prefix
+    /// sum is rebuilt on every page change. As a safety fallback, if the
+    /// prefix sum is somehow missing we fall back to the legacy O(N) walk.
     private func charOffsetForWordProgress(_ progress: Double) -> Int {
+        let offsets = content.wordCharOffsets
+        if offsets.count == words.count + 1, !words.isEmpty {
+            let whole = max(0, min(Int(progress), words.count))
+            let frac = progress - Double(whole)
+            let base = offsets[whole]
+            let added = Int(Double(words[whole].count) * frac)
+            return min(base + added, totalCharCount)
+        }
+        // Fallback: legacy O(N) path (never expected to run in production,
+        // but keeps the function total if the prefix sum is missing).
         let wholeWord = Int(progress)
         let frac = progress - Double(wholeWord)
         var offset = 0
@@ -840,11 +896,11 @@ struct NotchOverlayView: View {
             switch listeningMode {
             case .classic:
                 if !isPaused {
-                    timerWordProgress += speed * 0.05
+                    timerWordProgress += speed * 0.1
                 }
             case .silencePaused:
                 if !isPaused && speechRecognizer.isListening && speechRecognizer.isSpeaking {
-                    timerWordProgress += speed * 0.05
+                    timerWordProgress += speed * 0.1
                 }
             case .wordTracking:
                 break
@@ -922,7 +978,7 @@ struct NotchOverlayView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .help(error)
                 } else if listeningMode == .wordTracking {
-                    Text(speechRecognizer.lastSpokenText.split(separator: " ").suffix(3).joined(separator: " "))
+                    Text(speechRecognizer.lastSpokenTail3)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.white.opacity(0.5))
                         .lineLimit(1)
@@ -1224,14 +1280,28 @@ struct FloatingOverlayView: View {
     @State private var timerWordProgress: Double = 0
     @State private var isPaused: Bool = false
     @State private var isUserScrolling: Bool = false
-    private let scrollTimer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
+    // R50: throttled from 20Hz → 10Hz. 50 ms is overkill for scroll-position
+    // updates (eye perceives ~24Hz+ as smooth); 100 ms is indistinguishable
+    // but cuts body re-runs for NotchOverlayView in half in classic mode.
+    private let scrollTimer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
     private var listeningMode: ListeningMode {
         NotchSettings.shared.listeningMode
     }
 
-    /// Convert fractional word index to char offset using actual word lengths
+    /// Convert fractional word index to char offset using actual word lengths.
+    /// R52: now O(1) via prefix sum (`content.wordCharOffsets`) instead of an
+    /// O(N) loop over `words`. See NotchOverlayView's copy for the same notes.
     private func charOffsetForWordProgress(_ progress: Double) -> Int {
+        let offsets = content.wordCharOffsets
+        if offsets.count == words.count + 1, !words.isEmpty {
+            let whole = max(0, min(Int(progress), words.count))
+            let frac = progress - Double(whole)
+            let base = offsets[whole]
+            let added = Int(Double(words[whole].count) * frac)
+            return min(base + added, totalCharCount)
+        }
+        // Fallback: legacy O(N) path.
         let wholeWord = Int(progress)
         let frac = progress - Double(wholeWord)
         var offset = 0
@@ -1353,11 +1423,11 @@ struct FloatingOverlayView: View {
             switch listeningMode {
             case .classic:
                 if !isPaused {
-                    timerWordProgress += speed * 0.05
+                    timerWordProgress += speed * 0.1
                 }
             case .silencePaused:
                 if !isPaused && speechRecognizer.isListening && speechRecognizer.isSpeaking {
-                    timerWordProgress += speed * 0.05
+                    timerWordProgress += speed * 0.1
                 }
             case .wordTracking:
                 break
@@ -1416,7 +1486,7 @@ struct FloatingOverlayView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .help(error)
                 } else if listeningMode == .wordTracking {
-                    Text(speechRecognizer.lastSpokenText.split(separator: " ").suffix(3).joined(separator: " "))
+                    Text(speechRecognizer.lastSpokenTail3)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.white.opacity(0.5))
                         .lineLimit(1)

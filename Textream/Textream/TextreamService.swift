@@ -45,21 +45,28 @@ class TextreamService: NSObject, ObservableObject {
         launchedExternally = true
         hideMainWindow()
 
-        overlayController.show(text: trimmed, hasNextPage: hasNextPage) { [weak self] in
+        // Also show on external display if configured (same parsing as overlay)
+        let words = splitTextIntoWords(trimmed)
+        let totalCharCount = words.reduce(0) { $0 + $1.count } + max(0, words.count - 1)
+        // Cache hasNextPage once — each property access is O(P) over remaining pages.
+        let nextPage = hasNextPage
+
+        overlayController.show(
+            text: trimmed,
+            words: words,
+            totalCharCount: totalCharCount,
+            hasNextPage: nextPage
+        ) { [weak self] in
             self?.externalDisplayController.dismiss()
             self?.browserServer.hideContent()
             self?.onOverlayDismissed?()
         }
         updatePageInfo()
-
-        // Also show on external display if configured (same parsing as overlay)
-        let words = splitTextIntoWords(trimmed)
-        let totalCharCount = words.joined(separator: " ").count
         externalDisplayController.show(
             speechRecognizer: overlayController.speechRecognizer,
             words: words,
             totalCharCount: totalCharCount,
-            hasNextPage: hasNextPage
+            hasNextPage: nextPage
         )
 
         if browserServer.isRunning {
@@ -67,7 +74,7 @@ class TextreamService: NSObject, ObservableObject {
                 speechRecognizer: overlayController.speechRecognizer,
                 words: words,
                 totalCharCount: totalCharCount,
-                hasNextPage: hasNextPage
+                hasNextPage: nextPage
             )
         }
     }
@@ -105,24 +112,34 @@ class TextreamService: NSObject, ObservableObject {
         currentPageIndex = index
         readPages.insert(currentPageIndex)
 
-        let trimmed = currentPageText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        // `text` is already the trimmed version of pages[index]; no need to
+        // re-trim via currentPageText (which is the same string anyway).
+        guard !text.isEmpty else { return }
+
+        // Compute words once and reuse across overlay, external display, and browser
+        let words = splitTextIntoWords(text)
+        let totalCharCount = words.reduce(0) { $0 + $1.count } + max(0, words.count - 1)
+        let nextPage = hasNextPage
 
         // Update content in-place without recreating the panel
-        overlayController.updateContent(text: trimmed, hasNextPage: hasNextPage)
+        overlayController.show(
+            text: text,
+            words: words,
+            totalCharCount: totalCharCount,
+            hasNextPage: nextPage
+        )
         updatePageInfo()
 
         // Also update external display content in-place
-        let words = splitTextIntoWords(trimmed)
         externalDisplayController.overlayContent.words = words
-        externalDisplayController.overlayContent.totalCharCount = words.joined(separator: " ").count
-        externalDisplayController.overlayContent.hasNextPage = hasNextPage
+        externalDisplayController.overlayContent.totalCharCount = totalCharCount
+        externalDisplayController.overlayContent.hasNextPage = nextPage
 
         if browserServer.isRunning {
             browserServer.updateContent(
                 words: words,
-                totalCharCount: words.joined(separator: " ").count,
-                hasNextPage: hasNextPage
+                totalCharCount: totalCharCount,
+                hasNextPage: nextPage
             )
         }
 
@@ -137,16 +154,34 @@ class TextreamService: NSObject, ObservableObject {
         }
     }
 
+    // Cache pagePreviews keyed by a fingerprint of `pages` (count + content
+    // hashes). readText and jumpToPage both call updatePageInfo, but pages
+    // typically hasn't changed between calls — recomputing previews every
+    // time is O(P × 40) of throwaway work.
+    private var cachedPagesFingerprint: Int = 0
+    private var cachedPagesCount: Int = 0
+    private var cachedPagePreviews: [String] = []
+
     func updatePageInfo() {
         let content = overlayController.overlayContent
         content.pageCount = pages.count
         content.currentPageIndex = currentPageIndex
-        content.pagePreviews = pages.enumerated().map { (i, text) in
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty { return "" }
-            let preview = String(trimmed.prefix(40))
-            return preview + (trimmed.count > 40 ? "…" : "")
+
+        var fp = pages.count
+        for page in pages {
+            fp = (fp &* 31) &+ page.hashValue
         }
+        if fp != cachedPagesFingerprint || pages.count != cachedPagesCount {
+            cachedPagesFingerprint = fp
+            cachedPagesCount = pages.count
+            cachedPagePreviews = pages.map { text in
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.isEmpty { return "" }
+                let preview = String(trimmed.prefix(40))
+                return preview + (trimmed.count > 40 ? "…" : "")
+            }
+        }
+        content.pagePreviews = cachedPagePreviews
     }
 
     func startAllPages() {
@@ -359,7 +394,16 @@ class TextreamService: NSObject, ObservableObject {
 
         directorIsReading = true
 
-        overlayController.show(text: trimmed, hasNextPage: false) { [weak self] in
+        // Compute words once and reuse across overlay, director server, external display, and browser
+        let words = splitTextIntoWords(trimmed)
+        let totalCharCount = words.reduce(0) { $0 + $1.count } + max(0, words.count - 1)
+
+        overlayController.show(
+            text: trimmed,
+            words: words,
+            totalCharCount: totalCharCount,
+            hasNextPage: false
+        ) { [weak self] in
             self?.directorIsReading = false
             self?.directorServer.hideContent()
             self?.externalDisplayController.dismiss()
@@ -369,8 +413,6 @@ class TextreamService: NSObject, ObservableObject {
         }
 
         // Feed director server with speech recognizer
-        let words = splitTextIntoWords(trimmed)
-        let totalCharCount = words.joined(separator: " ").count
         directorServer.showContent(
             speechRecognizer: overlayController.speechRecognizer,
             words: words,
@@ -405,11 +447,10 @@ class TextreamService: NSObject, ObservableObject {
         let preservedCharCount = overlayController.speechRecognizer.recognizedCharCount
 
         let words = splitTextIntoWords(trimmed)
-        let totalCharCount = words.joined(separator: " ").count
+        let totalCharCount = words.reduce(0) { $0 + $1.count } + max(0, words.count - 1)
 
         // Update overlay content without resetting speech progress
-        overlayController.overlayContent.words = words
-        overlayController.overlayContent.totalCharCount = totalCharCount
+        overlayController.overlayContent.setWords(words, totalCharCount: totalCharCount)
         overlayController.overlayContent.hasNextPage = false
 
         // Update the speech recognizer with new full text but keep char count

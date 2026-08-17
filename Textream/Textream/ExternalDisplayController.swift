@@ -118,36 +118,34 @@ struct ExternalDisplayView: View {
     @State private var isUserScrolling: Bool = false
     private let scrollTimer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
 
+    // Cached word index (see WordIndexTable in MarqueeTextView.swift).
+    @State private var wordIndex: WordIndexTable = WordIndexTable(words: [])
+    @State private var lastIndexedPage: Int = -1
+
     private var listeningMode: ListeningMode {
         NotchSettings.shared.listeningMode
     }
 
-    /// Convert fractional word index to char offset using actual word lengths
+    /// Convert fractional word index to char offset using cached word index.
+    /// O(1) per call after a one-time O(N) build per page-change.
     private func charOffsetForWordProgress(_ progress: Double) -> Int {
-        let wholeWord = Int(progress)
-        let frac = progress - Double(wholeWord)
-        var offset = 0
-        for i in 0..<min(wholeWord, words.count) {
-            offset += words[i].count + 1
-        }
-        if wholeWord < words.count {
-            offset += Int(Double(words[wholeWord].count) * frac)
-        }
-        return min(offset, totalCharCount)
+        rebuildWordIndexIfNeeded()
+        return wordIndex.charOffset(forProgress: progress)
     }
 
-    /// Convert char offset back to fractional word index (for taps)
+    /// Convert char offset back to fractional word index (for taps).
+    /// O(log N) per call after a one-time O(N) build per page-change.
     private func wordProgressForCharOffset(_ charOffset: Int) -> Double {
-        var offset = 0
-        for (i, word) in words.enumerated() {
-            let end = offset + word.count
-            if charOffset <= end {
-                let frac = Double(charOffset - offset) / Double(max(1, word.count))
-                return Double(i) + frac
-            }
-            offset = end + 1
+        rebuildWordIndexIfNeeded()
+        return wordIndex.wordProgress(forCharOffset: charOffset)
+    }
+
+    private func rebuildWordIndexIfNeeded() {
+        let page = content.currentPageIndex
+        if page != lastIndexedPage {
+            wordIndex = WordIndexTable(words: words)
+            lastIndexedPage = page
         }
-        return Double(words.count)
     }
 
     private var effectiveCharCount: Int {
@@ -197,6 +195,7 @@ struct ExternalDisplayView: View {
             }
         }
         .onReceive(scrollTimer) { _ in
+            guard listeningMode != .wordTracking else { return }
             guard !isDone, !isUserScrolling else { return }
             let speed = NotchSettings.shared.scrollSpeed // words per second
             switch listeningMode {
@@ -250,8 +249,8 @@ struct ExternalDisplayView: View {
                 Spacer().frame(height: 20)
 
                 HStack(alignment: .center, spacing: 16) {
-                    AudioWaveformProgressView(
-                        levels: speechRecognizer.audioLevels,
+                    AudioWaveformProgressView_Observer(
+                        recognizer: speechRecognizer,
                         progress: totalCharCount > 0
                             ? Double(effectiveCharCount) / Double(totalCharCount)
                             : 0
@@ -259,12 +258,7 @@ struct ExternalDisplayView: View {
                     .frame(width: 240, height: 32)
 
                     if listeningMode == .wordTracking {
-                        Text(speechRecognizer.lastSpokenText.split(separator: " ").suffix(5).joined(separator: " "))
-                            .font(.system(size: 18, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.5))
-                            .lineLimit(1)
-                            .truncationMode(.head)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        LastSpokenTailText(recognizer: speechRecognizer, tailSize: 5, fontSize: 18)
                     } else {
                         Spacer()
                     }
