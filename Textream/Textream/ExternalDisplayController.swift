@@ -203,6 +203,17 @@ struct ExternalDisplayView: View {
         // @Observable-backed read the body performs is now served from a
         // single local instead of going through the access tracker.
         let showElapsed = NotchSettings.shared.showElapsedTime
+        // R73: cache `scrollSpeed` once. The previous scrollTimer closure
+        // read `NotchSettings.shared.scrollSpeed` at every 20 Hz tick (line
+        // `let speed = NotchSettings.shared.scrollSpeed`). The closure
+        // captures body-level scope, so hoisting is safe: when the user
+        // changes scrollSpeed, NotchSettings writes trigger a body re-render
+        // via @Observable (the body depends on it for nothing else, but the
+        // @Observable access tracker re-fires the view on writes), and the
+        // new value is captured for subsequent ticks. Closure also returns
+        // early in `.wordTracking` mode where scrollSpeed is unused, so
+        // there's no staleness window to worry about.
+        let speed = NotchSettings.shared.scrollSpeed
         return ZStack {
             Color.black.ignoresSafeArea()
 
@@ -246,7 +257,9 @@ struct ExternalDisplayView: View {
             guard mode != .wordTracking else { return }
             // R68: use cached `done` instead of recomputing `isDone` here.
             guard !done, !isUserScrolling else { return }
-            let speed = NotchSettings.shared.scrollSpeed // words per second
+            // R73: use the body-captured `speed` (read once per body
+            // render) instead of `NotchSettings.shared.scrollSpeed` here.
+            // Saves 20 singleton reads/sec (one per 20 Hz tick).
             switch mode {
             case .classic:
                 timerWordProgress += speed * 0.05
