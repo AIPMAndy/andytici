@@ -273,9 +273,27 @@ struct ExternalDisplayView: View {
     }
 
     private func prompterView(effective: Int) -> some View {
+        // R78: mirror the R76 local-cache pattern from
+        // NotchOverlayController.prompterView. GeometryReader body
+        // re-runs every time this view is rendered — which on the
+        // external display happens at 20 Hz whenever the scrollTimer
+        // drives timerWordProgress. Previously each render went
+        // through 4 NotchSettings.shared reads (fontColorPreset,
+        // cueColorPreset, cueBrightness.unreadOpacity, cueBrightness
+        // .readOpacity) plus 4 listeningMode reads (onWordTap
+        // closure, smoothScroll argument, toolbar wordTracking
+        // branch, toolbar classic branch) — 8 singleton reads per
+        // render × 20 Hz = 160 reads/sec. Hoist to locals; the
+        // closures below capture them by enclosing scope, the same
+        // way NotchOverlayController.prompterView does.
         GeometryReader { geo in
             let fontSize = max(48, min(96, geo.size.width / 14))
             let hPad = max(40, geo.size.width * 0.08)
+            let fontColor = NotchSettings.shared.fontColorPreset.color
+            let cueColor = NotchSettings.shared.cueColorPreset.color
+            let cueUnread = NotchSettings.shared.cueBrightness.unreadOpacity
+            let cueRead = NotchSettings.shared.cueBrightness.readOpacity
+            let mode = listeningMode
 
             VStack(spacing: 0) {
                 Spacer().frame(height: 20)
@@ -286,12 +304,15 @@ struct ExternalDisplayView: View {
                     // instead of re-evaluating effectiveCharCount here.
                     highlightedCharCount: effective,
                     font: .systemFont(ofSize: fontSize, weight: .semibold),
-                    highlightColor: NotchSettings.shared.fontColorPreset.color,
-                    cueColor: NotchSettings.shared.cueColorPreset.color,
-                    cueUnreadOpacity: NotchSettings.shared.cueBrightness.unreadOpacity,
-                    cueReadOpacity: NotchSettings.shared.cueBrightness.readOpacity,
+                    // R78: served from the locals above (single read per
+                    // GeometryReader render).
+                    highlightColor: fontColor,
+                    cueColor: cueColor,
+                    cueUnreadOpacity: cueUnread,
+                    cueReadOpacity: cueRead,
                     onWordTap: { charOffset in
-                        if listeningMode == .wordTracking {
+                        // R78: served from `mode` local.
+                        if mode == .wordTracking {
                             speechRecognizer.jumpTo(charOffset: charOffset)
                         } else {
                             timerWordProgress = wordProgressForCharOffset(charOffset)
@@ -303,7 +324,8 @@ struct ExternalDisplayView: View {
                             timerWordProgress = max(0, min(Double(words.count), newProgress))
                         }
                     },
-                    smoothScroll: listeningMode != .wordTracking,
+                    // R78: served from `mode` local.
+                    smoothScroll: mode != .wordTracking,
                     smoothWordProgress: timerWordProgress,
                     isListening: isEffectivelyListening
                 )
@@ -321,13 +343,15 @@ struct ExternalDisplayView: View {
                     )
                     .frame(width: 240, height: 32)
 
-                    if listeningMode == .wordTracking {
+                    // R78: served from `mode` local.
+                    if mode == .wordTracking {
                         LastSpokenTailText(recognizer: speechRecognizer, tailSize: 5, fontSize: 18)
                     } else {
                         Spacer()
                     }
 
-                    if listeningMode != .classic {
+                    // R78: served from `mode` local.
+                    if mode != .classic {
                         Button {
                             if speechRecognizer.isListening {
                                 speechRecognizer.stop()
