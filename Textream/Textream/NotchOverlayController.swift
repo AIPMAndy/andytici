@@ -79,6 +79,13 @@ class NotchOverlayController: NSObject {
     private var mouseTrackingTimer: AnyCancellable?
     private var cursorTrackingTimer: AnyCancellable?
     private var currentScreenID: UInt32 = 0
+    // R71: cache the last frame we set via panel.setFrame in cursor-follow
+    // mode. cursorTrackingTimer runs at 60 Hz; while the mouse is idle the
+    // computed frame is byte-identical to the previous tick, but setFrame
+    // still triggers a WindowServer roundtrip (~1 ms). Skipping the
+    // roundtrip on unchanged frames is invisible to the user and saves
+    // up to ~60 ms/sec of WindowServer time when the speaker pauses.
+    private var lastCursorFrame: NSRect?
     private var stopButtonPanel: NSPanel?
     private var escMonitor: Any?
 
@@ -229,6 +236,12 @@ class NotchOverlayController: NSObject {
         // NSScreen.screens scan on the same 30Hz tick.
         guard let screen = screenUnderMouse(mouseLocation: mouse) ?? panel.screen ?? NSScreen.main else { return }
         let frame = cursorFollowingFrame(mouse: mouse, panelSize: panel.frame.size, screen: screen)
+        // R71: skip the WindowServer roundtrip when the frame is unchanged
+        // from the previous tick. NSRect.== is 4 CGFloat compares (~5 ns) —
+        // far cheaper than a setFrame IPC. Cache invalidates naturally when
+        // mouse, panel size, or screen changes.
+        if let prev = lastCursorFrame, prev == frame { return }
+        lastCursorFrame = frame
         panel.setFrame(frame, display: false)
     }
 
