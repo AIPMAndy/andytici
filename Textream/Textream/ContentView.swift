@@ -601,12 +601,21 @@ struct ContentView: View {
                     Button {
                         showSettings = true
                     } label: {
+                        // R79: cache `listeningMode` once. The previous label
+                        // closure read `NotchSettings.shared.listeningMode`
+                        // three times (icon, ternary LHS, ternary RHS) — each
+                        // read goes through the @Observable singleton's access
+                        // tracker. Toolbar content re-evaluates on every
+                        // @Observable write that propagates here (settings
+                        // toggles, language changes, etc.), so collapsing to a
+                        // single read matches the R74-R78 body-outer pattern.
+                        let mode = NotchSettings.shared.listeningMode
                         HStack(spacing: 4) {
-                            Image(systemName: NotchSettings.shared.listeningMode.icon)
+                            Image(systemName: mode.icon)
                                 .font(.system(size: 10))
-                            Text(NotchSettings.shared.listeningMode == .wordTracking
+                            Text(mode == .wordTracking
                                  ? languageLabel
-                                 : NotchSettings.shared.listeningMode.label)
+                                 : mode.label)
                                 .font(.system(size: 11, weight: .medium))
                                 .lineLimit(1)
                         }
