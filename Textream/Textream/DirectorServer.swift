@@ -46,6 +46,11 @@ class DirectorServer {
     private var wsListener: NWListener?
     private var wsConnections: [NWConnection] = []
     private var authenticatedConnections: Set<ObjectIdentifier> = []
+    // R63: mirror of authenticated connections as an array. Maintained at
+    // auth-grant / disconnect events so broadcast() can iterate authenticated
+    // clients without re-creating ObjectIdentifier and re-scanning wsConnections
+    // on every 10Hz tick.
+    private var authenticatedConnectionsList: [NWConnection] = []
     private var broadcastTimer: Timer?
 
     // Connection limit to prevent resource exhaustion (CWE-400)
@@ -127,6 +132,7 @@ class DirectorServer {
         for conn in wsConnections { conn.cancel() }
         wsConnections.removeAll()
         authenticatedConnections.removeAll()
+        authenticatedConnectionsList.removeAll()
         contentActive = false
     }
 
@@ -231,6 +237,7 @@ class DirectorServer {
             case .failed, .cancelled:
                 self?.wsConnections.removeAll { $0 === conn }
                 self?.authenticatedConnections.remove(ObjectIdentifier(conn))
+                self?.authenticatedConnectionsList.removeAll { $0 === conn }
             default: break
             }
         }
@@ -257,6 +264,9 @@ class DirectorServer {
             if !self.authenticatedConnections.contains(connId) {
                 if command.type == "auth", command.text == self.authToken {
                     self.authenticatedConnections.insert(connId)
+                    // R63: mirror into the array so broadcast() can skip the
+                    // per-tick `filter { ... contains(ObjectIdentifier($0)) }`.
+                    self.authenticatedConnectionsList.append(conn)
                 } else {
                     conn.cancel()
                 }
@@ -355,7 +365,7 @@ class DirectorServer {
         lastBroadcastState = data
         cacheSignature(state)
 
-        let connections = wsConnections.filter { authenticatedConnections.contains(ObjectIdentifier($0)) }
+        let connections = authenticatedConnectionsList
         guard !connections.isEmpty else { return }
         let meta = NWProtocolWebSocket.Metadata(opcode: .text)
         let ctx = NWConnection.ContentContext(identifier: "ws", metadata: [meta])
