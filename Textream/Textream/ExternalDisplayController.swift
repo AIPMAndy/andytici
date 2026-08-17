@@ -194,6 +194,15 @@ struct ExternalDisplayView: View {
         // closures capture enclosing scope. Net per body render: -2
         // singleton reads.
         let mode = listeningMode
+        // R72: cache `showElapsedTime` once. The previous body read
+        // `NotchSettings.shared.showElapsedTime` inside the .overlay
+        // closure every render. Body re-renders at 20 Hz in classic / silence-
+        // paused modes (scrollTimer drives timerWordProgress), so this was
+        // 20 singleton reads/sec that the R68/R70 cache pattern had missed.
+        // Hoisting also makes the body-local cache set complete: every
+        // @Observable-backed read the body performs is now served from a
+        // single local instead of going through the access tracker.
+        let showElapsed = NotchSettings.shared.showElapsedTime
         return ZStack {
             Color.black.ignoresSafeArea()
 
@@ -210,7 +219,8 @@ struct ExternalDisplayView: View {
             }
         }
         .overlay(alignment: .topTrailing) {
-            if NotchSettings.shared.showElapsedTime {
+            // R72: served from the body-cached `showElapsed` local.
+            if showElapsed {
                 ElapsedTimeView(fontSize: 24)
                     .padding(.top, 20)
                     .padding(.trailing, 40)
