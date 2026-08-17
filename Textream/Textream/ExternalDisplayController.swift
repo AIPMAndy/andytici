@@ -195,16 +195,23 @@ struct ExternalDisplayView: View {
             }
         }
         .onReceive(scrollTimer) { _ in
-            guard listeningMode != .wordTracking else { return }
+            // R67: cache `listeningMode` once. The previous version read it
+            // twice per 20 Hz tick (once in the guard, once in the switch) —
+            // each read goes through `NotchSettings.shared`'s @Observable
+            // access tracker. Hoisting to a local also lets us convert the
+            // nested `if` in the .silencePaused branch to a `guard`,
+            // removing one branch and one indent level. Net per tick:
+            // -1 singleton read, -1 branch.
+            let mode = listeningMode
+            guard mode != .wordTracking else { return }
             guard !isDone, !isUserScrolling else { return }
             let speed = NotchSettings.shared.scrollSpeed // words per second
-            switch listeningMode {
+            switch mode {
             case .classic:
                 timerWordProgress += speed * 0.05
             case .silencePaused:
-                if speechRecognizer.isListening && speechRecognizer.isSpeaking {
-                    timerWordProgress += speed * 0.05
-                }
+                guard speechRecognizer.isListening, speechRecognizer.isSpeaking else { return }
+                timerWordProgress += speed * 0.05
             case .wordTracking:
                 break
             }
