@@ -57,18 +57,13 @@ class BrowserServer {
     private weak var speechRecognizer: SpeechRecognizer?
     private var timerWordProgress: Double = 0
     private var contentActive: Bool = false
-    // Prefix sum of (word.count + 1) for words[0..<i]: cachedCharOffsets[i] is the
-    // char offset BEFORE word i. cachedCharOffsets.count = words.count + 1.
-    // Lets charOffsetForWordProgress go from O(wholeWord) to O(1) per call;
-    // the 10Hz broadcast timer otherwise re-walks 0..<wholeWord every tick.
-    // Rebuilt only when words array changes (showContent / updateContent). (R32)
-    private var cachedCharOffsets: [Int] = [0]
-    // R58: per-word grapheme counts cached alongside the prefix sum. Without
-    // this, the fractional branch in charOffsetForWordProgress does
-    // `words[wholeWord].count` — an O(M) grapheme walk — twice per 10Hz
-    // broadcast tick (called from broadcastCurrentState). Rebuild together
-    // with cachedCharOffsets in rebuildCharOffsetCache.
-    private var cachedWordCharCounts: [Int] = []
+    // R100: WordIndexTable is the single source of truth for char-offset ⇄
+    // progress lookups across BrowserServer, NotchOverlayView, FloatingOverlayView,
+    // and ExternalDisplayController. Replaces the bespoke `cachedCharOffsets`
+    // (length N+1) + `cachedWordCharCounts` (length N) prefix-sum pair that
+    // BrowserServer maintained separately and could silently drift from the
+    // canonical implementation in MarqueeTextView.swift.
+    private var wordIndex: WordIndexTable = WordIndexTable(words: [])
     // Cached JSONEncoder: JSONEncoder() carries a small amount of internal
     // state and allocates per call. With 10Hz broadcasting, caching shaves
     // 10 encoder allocations per second on the main thread. (R33)
@@ -165,7 +160,7 @@ class BrowserServer {
         self.hasNextPage = hasNextPage
         self.timerWordProgress = 0
         self.contentActive = true
-        rebuildCharOffsetCache()
+        wordIndex = WordIndexTable(words: words)
         startBroadcasting()
     }
 
@@ -174,7 +169,7 @@ class BrowserServer {
         self.totalCharCount = totalCharCount
         self.hasNextPage = hasNextPage
         self.timerWordProgress = 0
-        rebuildCharOffsetCache()
+        wordIndex = WordIndexTable(words: words)
     }
 
     func hideContent() {
@@ -420,43 +415,13 @@ class BrowserServer {
 
     // MARK: - Helpers
 
-    /// Rebuild the prefix-sum cache for `charOffsetForWordProgress`. O(N) once
-    /// per words-change (showContent/updateContent), saves O(wholeWord) per
-    /// 10Hz broadcast tick. (R32)
-    private func rebuildCharOffsetCache() {
-        var offsets = [Int]()
-        offsets.reserveCapacity(words.count + 1)
-        offsets.append(0)
-        // R58: build per-word char count cache in the same pass so the
-        // fractional branch in charOffsetForWordProgress can skip the
-        // O(M) grapheme walk on every 10Hz tick.
-        var charCounts = [Int]()
-        charCounts.reserveCapacity(words.count)
-        var acc = 0
-        for word in words {
-            let n = word.count
-            charCounts.append(n)
-            acc += n + 1
-            offsets.append(acc)
-        }
-        cachedCharOffsets = offsets
-        cachedWordCharCounts = charCounts
-    }
-
-    /// Convert fractional word progress into a char offset using the prefix-sum
-    /// cache. O(1) lookup per call after a one-time O(N) build per words-change.
+    /// Convert fractional word progress into a char offset using WordIndexTable.
+    /// O(1) per call after a one-time O(N) build per words-change. (R100)
+    /// Delegates to the canonical implementation in MarqueeTextView.swift that
+    /// also backs ExternalDisplayController, NotchOverlayView, and
+    /// FloatingOverlayView — single source of truth for the whole product.
     private func charOffsetForWordProgress(_ progress: Double) -> Int {
-        let count = words.count
-        guard count > 0 else { return 0 }
-        let wholeWord = min(Int(progress), count)
-        let frac = progress - Double(wholeWord)
-        var offset = cachedCharOffsets[wholeWord]
-        if wholeWord < count {
-            // R58: O(1) read from cachedWordCharCounts instead of walking
-            // words[wholeWord].count (O(M) graphemes) on every 10Hz tick.
-            offset += Int(Double(cachedWordCharCounts[wholeWord]) * frac)
-        }
-        return min(offset, totalCharCount)
+        return wordIndex.charOffset(forProgress: progress)
     }
 
     static func localIPAddress() -> String? {

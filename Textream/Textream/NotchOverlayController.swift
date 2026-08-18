@@ -56,13 +56,6 @@ class OverlayContent {
     var words: [String] = []
     var totalCharCount: Int = 0
     var hasNextPage: Bool = false
-    /// R52: prefix-sum of char offsets for O(1) word-progress → char-offset
-    /// lookups. `wordCharOffsets[i]` = sum of (words[0..<i].count + 1 each),
-    /// so `wordCharOffsets[0] == 0` and `wordCharOffsets[words.count] ==
-    /// totalCharCount`. Built once per page change; consumed by notch
-    /// overlay views' `charOffsetForWordProgress` (was O(N) per call, now
-    /// O(1)).
-    var wordCharOffsets: [Int] = []
 
     // Page picker
     var pageCount: Int = 1
@@ -71,18 +64,14 @@ class OverlayContent {
     var showPagePicker: Bool = false
     var jumpToPageIndex: Int? = nil
 
-    /// R52: single entry point for updating words + totalCharCount so the
-    /// prefix sum stays in sync. Always use this instead of assigning
-    /// `words` and `totalCharCount` independently — otherwise the prefix
-    /// sum drifts and the O(1) charOffsetForWordProgress returns wrong values.
+    /// R100: single entry point for updating words + totalCharCount. Always
+    /// use this instead of assigning `words` and `totalCharCount` independently.
+    /// (Char-offset ⇄ progress lookup moved out to per-view WordIndexTable
+    /// caches — this struct no longer carries a separate prefix-sum, so the
+    /// historical "drift between words and wordCharOffsets" hazard is gone.)
     func setWords(_ newWords: [String], totalCharCount: Int) {
         self.words = newWords
         self.totalCharCount = totalCharCount
-        var offsets = [Int](repeating: 0, count: newWords.count + 1)
-        for i in 0..<newWords.count {
-            offsets[i + 1] = offsets[i] + newWords[i].count + 1 // +1 for space
-        }
-        self.wordCharOffsets = offsets
     }
 }
 
@@ -228,16 +217,12 @@ class NotchOverlayController: NSObject {
         speechRecognizer.shouldAdvancePage = false
         speechRecognizer.lastSpokenText = ""
 
-        overlayContent.words = normalized
-        overlayContent.totalCharCount = normalized.joined(separator: " ").count
-        // R52: keep prefix sum in sync with the new words list (init from
-        // totalCharCount-derivation; the old `totalCharCount` was joined-
-        // separator-count which is consistent).
-        var prefix = [Int](repeating: 0, count: normalized.count + 1)
-        for i in 0..<normalized.count {
-            prefix[i + 1] = prefix[i] + normalized[i].count + 1
-        }
-        overlayContent.wordCharOffsets = prefix
+        // R100: route through setWords so the single entry point owns the
+        // words/totalCharCount assignment. The previous direct write of
+        // `overlayContent.wordCharOffsets` here was a second-source-of-truth
+        // bug — OverlayContent.setWords is now the canonical mutator.
+        let resolvedTotal = normalized.joined(separator: " ").count
+        overlayContent.setWords(normalized, totalCharCount: resolvedTotal)
         overlayContent.hasNextPage = hasNextPage
 
         let settings = NotchSettings.shared
@@ -806,46 +791,31 @@ struct NotchOverlayView: View {
         NotchSettings.shared.listeningMode
     }
 
-    /// Convert fractional word index to char offset using actual word lengths.
-    /// R52: now O(1) via prefix sum (`content.wordCharOffsets`) instead of an
-    /// O(N) loop over `words`. content is shared OverlayContent; the prefix
-    /// sum is rebuilt on every page change. As a safety fallback, if the
-    /// prefix sum is somehow missing we fall back to the legacy O(N) walk.
+    /// R100: char-offset ⇄ progress lookups delegated to a per-view
+    /// WordIndexTable (the canonical implementation in MarqueeTextView.swift,
+    /// shared with ExternalDisplayController and BrowserServer). Replaces the
+    /// old R52 prefix-sum-in-OverlayContent + R100 O(N) walk pair. Each
+    /// direction is O(1) / O(log N) per call after a one-time O(N) build
+    /// per page change.
+    @State private var wordIndex: WordIndexTable = WordIndexTable(words: [])
+    @State private var lastIndexedPage: Int = -1
+
     private func charOffsetForWordProgress(_ progress: Double) -> Int {
-        let offsets = content.wordCharOffsets
-        if offsets.count == words.count + 1, !words.isEmpty {
-            let whole = max(0, min(Int(progress), words.count))
-            let frac = progress - Double(whole)
-            let base = offsets[whole]
-            let added = Int(Double(words[whole].count) * frac)
-            return min(base + added, totalCharCount)
-        }
-        // Fallback: legacy O(N) path (never expected to run in production,
-        // but keeps the function total if the prefix sum is missing).
-        let wholeWord = Int(progress)
-        let frac = progress - Double(wholeWord)
-        var offset = 0
-        for i in 0..<min(wholeWord, words.count) {
-            offset += words[i].count + 1 // +1 for space
-        }
-        if wholeWord < words.count {
-            offset += Int(Double(words[wholeWord].count) * frac)
-        }
-        return min(offset, totalCharCount)
+        rebuildWordIndexIfNeeded()
+        return wordIndex.charOffset(forProgress: progress)
     }
 
-    /// Convert char offset back to fractional word index (for taps)
     private func wordProgressForCharOffset(_ charOffset: Int) -> Double {
-        var offset = 0
-        for (i, word) in words.enumerated() {
-            let end = offset + word.count
-            if charOffset <= end {
-                let frac = Double(charOffset - offset) / Double(max(1, word.count))
-                return Double(i) + frac
-            }
-            offset = end + 1
+        rebuildWordIndexIfNeeded()
+        return wordIndex.wordProgress(forCharOffset: charOffset)
+    }
+
+    private func rebuildWordIndexIfNeeded() {
+        let page = content.currentPageIndex
+        if page != lastIndexedPage {
+            wordIndex = WordIndexTable(words: words)
+            lastIndexedPage = page
         }
-        return Double(words.count)
     }
 
     private var effectiveCharCount: Int {
@@ -1457,43 +1427,31 @@ struct FloatingOverlayView: View {
         NotchSettings.shared.listeningMode
     }
 
-    /// Convert fractional word index to char offset using actual word lengths.
-    /// R52: now O(1) via prefix sum (`content.wordCharOffsets`) instead of an
-    /// O(N) loop over `words`. See NotchOverlayView's copy for the same notes.
+    /// R100: char-offset ⇄ progress lookups delegated to a per-view
+    /// WordIndexTable (the canonical implementation in MarqueeTextView.swift,
+    /// shared with ExternalDisplayController, BrowserServer, and
+    /// NotchOverlayView). Replaces the old R52 prefix-sum-in-OverlayContent
+    /// + O(N) walk pair. Each direction is O(1) / O(log N) per call after a
+    /// one-time O(N) build per page change.
+    @State private var wordIndex: WordIndexTable = WordIndexTable(words: [])
+    @State private var lastIndexedPage: Int = -1
+
     private func charOffsetForWordProgress(_ progress: Double) -> Int {
-        let offsets = content.wordCharOffsets
-        if offsets.count == words.count + 1, !words.isEmpty {
-            let whole = max(0, min(Int(progress), words.count))
-            let frac = progress - Double(whole)
-            let base = offsets[whole]
-            let added = Int(Double(words[whole].count) * frac)
-            return min(base + added, totalCharCount)
-        }
-        // Fallback: legacy O(N) path.
-        let wholeWord = Int(progress)
-        let frac = progress - Double(wholeWord)
-        var offset = 0
-        for i in 0..<min(wholeWord, words.count) {
-            offset += words[i].count + 1
-        }
-        if wholeWord < words.count {
-            offset += Int(Double(words[wholeWord].count) * frac)
-        }
-        return min(offset, totalCharCount)
+        rebuildWordIndexIfNeeded()
+        return wordIndex.charOffset(forProgress: progress)
     }
 
-    /// Convert char offset back to fractional word index (for taps)
     private func wordProgressForCharOffset(_ charOffset: Int) -> Double {
-        var offset = 0
-        for (i, word) in words.enumerated() {
-            let end = offset + word.count
-            if charOffset <= end {
-                let frac = Double(charOffset - offset) / Double(max(1, word.count))
-                return Double(i) + frac
-            }
-            offset = end + 1
+        rebuildWordIndexIfNeeded()
+        return wordIndex.wordProgress(forCharOffset: charOffset)
+    }
+
+    private func rebuildWordIndexIfNeeded() {
+        let page = content.currentPageIndex
+        if page != lastIndexedPage {
+            wordIndex = WordIndexTable(words: words)
+            lastIndexedPage = page
         }
-        return Double(words.count)
     }
 
     private var effectiveCharCount: Int {
