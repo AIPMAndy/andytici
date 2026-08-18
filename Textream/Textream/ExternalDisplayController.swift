@@ -12,7 +12,12 @@ import Combine
 class ExternalDisplayController {
     private var panel: NSPanel?
     private var cancellables = Set<AnyCancellable>()
-    let overlayContent = OverlayContent()
+    // R103: both controllers now share the process-wide OverlayContent
+    // singleton. Previously this property owned its own instance and was
+    // kept in lockstep with NotchOverlayController.overlayContent via
+    // explicit setWords calls in TextreamService — those are now removed
+    // since mutations on one controller are immediately visible to the other.
+    let overlayContent = OverlayContent.shared
 
     /// Find the target external screen based on saved screen ID, or first non-main screen
     func targetScreen() -> NSScreen? {

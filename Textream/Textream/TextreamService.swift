@@ -146,15 +146,12 @@ class TextreamService: NSObject, ObservableObject {
         )
         updatePageInfo()
 
-        // Also update external display content in-place
-        // R101: collapse 3 separate property writes into one setWords call so
-        // all three props share a single mutator site (eliminates the
-        // pre-R100 bypass that bypassed the R100 single-entry-point).
-        externalDisplayController.overlayContent.setWords(
-            words,
-            totalCharCount: totalCharCount,
-            hasNextPage: nextPage
-        )
+        // R103: external display content is automatically in sync because
+        // both controllers now share OverlayContent.shared. The overlay's
+        // setWords call above (line 142 in NotchOverlayController.show) is
+        // already visible to the external display's @Bindable view bindings.
+        // Previously this block held a duplicate setWords call on
+        // externalDisplayController.overlayContent — removed.
 
         if browserServer.isRunning {
             browserServer.updateContent(
@@ -482,13 +479,9 @@ class TextreamService: NSObject, ObservableObject {
         // Update director server
         directorServer.updateContent(totalCharCount: totalCharCount)
 
-        // Update external display & browser
-        // R101: collapse 2 separate property writes into one setWords call.
-        externalDisplayController.overlayContent.setWords(
-            words,
-            totalCharCount: totalCharCount,
-            hasNextPage: false
-        )
+        // R103: external display is now auto-synced via the shared
+        // OverlayContent singleton — no explicit setWords call needed.
+        // Update browser (still has its own minimal state).
         if browserServer.isRunning {
             browserServer.updateContent(
                 words: words,

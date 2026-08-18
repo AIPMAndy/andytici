@@ -53,6 +53,16 @@ class NotchFrameTracker {
 
 @Observable
 class OverlayContent {
+    // R103: process-wide singleton. Both NotchOverlayController and
+    // ExternalDisplayController previously each owned their own instance,
+    // kept in sync via explicit setWords calls in TextreamService. With a
+    // shared instance, mutations on one controller's overlayContent are
+    // immediately observable to the other — no propagation logic needed.
+    // The class has no per-instance state that needs to differ between
+    // controllers (all 4 controllers that consumed it — notch, external
+    // display, browser, director — always received identical words/total/
+    // hasNextPage values from R100/R101), so consolidation is safe.
+    static let shared = OverlayContent()
     var words: [String] = []
     var totalCharCount: Int = 0
     var hasNextPage: Bool = false
@@ -124,7 +134,7 @@ class NotchOverlayController: NSObject {
     private let dismissTeardownDelay: TimeInterval = 0.6
     private var panel: NSPanel?
     let speechRecognizer = SpeechRecognizer()
-    let overlayContent = OverlayContent()
+    let overlayContent = OverlayContent.shared
     var onComplete: (() -> Void)?
     var onNextPage: (() -> Void)?
     private var cancellables = Set<AnyCancellable>()
