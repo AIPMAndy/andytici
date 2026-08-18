@@ -19,6 +19,16 @@ class NotchPreviewController {
     private var originalFrame: NSRect?
     private var cursorTimer: AnyCancellable?
     private var trackingSettings: NotchSettings?
+    // R89: cache the screen containing the mouse across 60 Hz
+    // cursor-tracking ticks. The mouse rarely crosses monitor boundaries
+    // (a few times per minute for typical use), so re-running
+    // `NSScreen.screens.first(where: { NSMouseInRect(...) })` every frame
+    // was wasted work — single-screen setups paid 60 NSMouseInRect calls
+    // per second forever, multi-screen setups paid 60 × N. The fallback
+    // chain (`?? panel.screen ?? NSScreen.main`) is preserved on cache
+    // miss so semantics are unchanged. `stopCursorTracking` clears it so
+    // re-entering the mode after the mouse changed monitors starts fresh.
+    private var lastMouseScreen: NSScreen?
 
     func show(settings: NotchSettings) {
         // If panel already exists, just re-show it
@@ -117,9 +127,20 @@ class NotchPreviewController {
         var visibleLeft = mouse.x + cursorOffset
         var visibleBottom = mouse.y - visibleHeight
 
-        if let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) })
-            ?? panel.screen
-            ?? NSScreen.main {
+        // R89: cache the screen containing the mouse across 60 Hz ticks.
+        // The mouse rarely crosses screen boundaries, so `first(where:) +
+        // NSMouseInRect` only re-runs when the cached screen no longer
+        // contains the mouse (monitor-edge crossings).
+        let screen: NSScreen?
+        if let cached = lastMouseScreen, NSMouseInRect(mouse, cached.frame, false) {
+            screen = cached
+        } else {
+            screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) })
+                ?? panel.screen
+                ?? NSScreen.main
+            lastMouseScreen = screen
+        }
+        if let screen {
             let screenFrame = screen.frame
             let minimumVisibleLeft = screenFrame.minX + screenEdgeMargin
             let maximumVisibleLeft = max(
@@ -147,6 +168,11 @@ class NotchPreviewController {
     private func stopCursorTracking() {
         cursorTimer?.cancel()
         cursorTimer = nil
+        // R89: clear cached screen so a fresh tracking session starts with
+        // a current NSMouseInRect check on the first tick (handles the
+        // case where the user moved to a different monitor between
+        // sessions).
+        lastMouseScreen = nil
     }
 
     private func updatePreviewPosition() {
