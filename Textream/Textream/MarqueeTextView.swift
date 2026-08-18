@@ -415,9 +415,18 @@ struct SpeechScrollView: View {
                         }
 
                         let maxY = cachedMaxY
-                        let containerHeight = geo.size.height
-                        let maxUp = containerHeight * 0.5
-                        let maxDown = max(0, maxY - containerHeight * 0.5)
+                        // R123: read cached containerHeight (@State) instead of
+                        // `geo.size.height`. The view's GeometryProxy access is
+                        // heavier than a plain @State read and `containerHeight`
+                        // is kept in sync by .onChange(of: geo.size.height)
+                        // (line ~336), so the two values can only diverge during
+                        // a single layout pass — and SwiftUI always emits the
+                        // height change BEFORE the next scroll event. Removes
+                        // 60 GeometryProxy reads/sec × 2 sites from the
+                        // 60Hz trackpad scroll path.
+                        let containerH = containerHeight
+                        let maxUp = containerH * 0.5
+                        let maxDown = max(0, maxY - containerH * 0.5)
 
                         let newOffset = manualOffset + delta
                         let upperBound = maxUp
@@ -446,9 +455,12 @@ struct SpeechScrollView: View {
                             onManualScroll?(false, newProgress)
                         } else {
                             let maxY = cachedMaxY
-                            let containerHeight = geo.size.height
-                            let upperBound = containerHeight * 0.5
-                            let lowerBound = -max(0, maxY - containerHeight * 0.5)
+                            // R123: same cache-read as the onScroll branch
+                            // above — avoid a GeometryProxy.size.height access
+                            // on every scrollEnd event.
+                            let containerH = containerHeight
+                            let upperBound = containerH * 0.5
+                            let lowerBound = -max(0, maxY - containerH * 0.5)
 
                             if manualOffset > upperBound || manualOffset < lowerBound {
                                 withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
