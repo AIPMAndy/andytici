@@ -1178,8 +1178,19 @@ struct NotchOverlayView: View {
 
             Group {
             HStack(alignment: .center, spacing: 8) {
-                AudioWaveformProgressView(
-                    levels: speechRecognizer.audioLevels,
+                // R113: route through AudioWaveformProgressView_Observer so
+                // that 15 Hz audio buffer ticks only re-render the 80-pt
+                // waveform, not the whole toolbar HStack (which also reads
+                // isPaused / isListening / isStarting / error / pageCount /
+                // hasNextPage / mode). Before: every audioLevels tick
+                // re-evaluated SpeechScrollView + the entire toolbar body.
+                // After: only the small wrapper re-renders on audioLevels
+                // changes; toolbar-only ticks (isPaused toggle, error
+                // change, pageCount bump) still update correctly. Mirror
+                // of the same fix applied to ExternalDisplayController
+                // line 420 and the floatingPrompterView toolbar below.
+                AudioWaveformProgressView_Observer(
+                    recognizer: speechRecognizer,
                     progress: totalCharCount > 0 ? Double(effective) / Double(totalCharCount) : 0
                 )
                 .frame(width: 80, height: 24)
@@ -1732,8 +1743,16 @@ struct FloatingOverlayView: View {
             .padding(.top, 12)
 
             HStack(alignment: .center, spacing: 8) {
-                AudioWaveformProgressView(
-                    levels: speechRecognizer.audioLevels,
+                // R113: same wrapper swap as the main prompterView toolbar
+                // above. FloatingOverlayView re-renders at 20 Hz in classic
+                // / silencePaused modes (scrollTimer); routing audioLevels
+                // through _Observer keeps the 15 Hz audio buffer tick
+                // from re-evaluating this toolbar body too. The wrapper
+                // body is the tiny 30-bar HStack — cheap to re-render —
+                // while the parent toolbar body has 6+ buttons and an
+                // error Label to skip on audio-only ticks.
+                AudioWaveformProgressView_Observer(
+                    recognizer: speechRecognizer,
                     progress: totalCharCount > 0 ? Double(effective) / Double(totalCharCount) : 0
                 )
                 .frame(width: 160, height: 24)
