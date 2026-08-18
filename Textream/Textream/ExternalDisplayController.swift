@@ -12,6 +12,15 @@ import Combine
 class ExternalDisplayController {
     private var panel: NSPanel?
     private var cancellables = Set<AnyCancellable>()
+    // R107: tracks the live Observation registration for `speechRecognizer
+    // .shouldDismiss`. Replaces the previous 10 Hz Timer.publish polling
+    // block: every 100 ms tick paid an @Observable proxy access for
+    // `shouldDismiss` (and the enclosing Timer.scheduledTimer drain).
+    // Event-driven via withObservationTracking fires within microseconds
+    // of the flag flipping true and burns zero CPU while idle. The
+    // trailing closure re-arms itself so the listener stays live across
+    // successive dismiss→reset cycles.
+    private var dismissObserver: (() -> Void)?
     // R103: both controllers now share the process-wide OverlayContent
     // singleton. Previously this property owned its own instance and was
     // kept in lockstep with NotchOverlayController.overlayContent via
@@ -70,20 +79,62 @@ class ExternalDisplayController {
         panel.orderFront(nil)
         self.panel = panel
 
-        // Poll for dismiss signal
-        Timer.publish(every: 0.1, on: .main, in: .common)
-            .autoconnect()
-            .sink { [weak self] _ in
-                guard let self, speechRecognizer.shouldDismiss else { return }
-                self.cancellables.removeAll()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    self.dismiss()
+        // R107: replaced 10 Hz Timer.publish polling of
+        // `speechRecognizer.shouldDismiss` with event-driven
+        // withObservationTracking. Wakes within microseconds of the flag
+        // flipping true instead of up to 100 ms later, and costs nothing
+        // while the user is presenting. The closure re-arms itself so it
+        // stays live across dismiss → reset cycles.
+        observeShouldDismiss(speechRecognizer: speechRecognizer)
+    }
+
+    /// Wires a one-shot Observation tracking that re-arms on every fire.
+    /// Mirrors the pattern SwiftUI's `.onChange(of:)` uses internally,
+    /// exposed to non-View consumers (controllers) that need the same
+    /// event-driven semantics without a view tree. (R107)
+    private func observeShouldDismiss(speechRecognizer: SpeechRecognizer) {
+        // Cancel any prior observer so a second `show()` call doesn't stack
+        // duplicate registrations (each previous registration would still
+        // fire, racing the latest one on the same flag flip).
+        dismissObserver = nil
+        withObservationTracking {
+            // Touch the property inside the apply closure so the runtime
+            // registers a dependency on this key path. Reading it here is
+            // the only thing that matters — the returned value is unused.
+            _ = speechRecognizer.shouldDismiss
+        } onChange: { [speechRecognizer] in
+            // The onChange closure is @Sendable, so it can only carry
+            // Sendable values out. Collapse the decision to a single Bool
+            // (Sendable) and hand the rest of the work — including the
+            // non-Sendable self/speechRecognizer captures the re-arm
+            // path needs — to a regular main-queue block. The outer
+            // capture of `speechRecognizer` is required so we can re-arm
+            // on the reset path below; Swift lifts the reference through
+            // the @Sendable boundary because DispatchQueue.main.async's
+            // block parameter is not @Sendable (only the queue *hop* is).
+            let didDismiss = speechRecognizer.shouldDismiss
+            DispatchQueue.main.async { [weak self, speechRecognizer] in
+                guard let self else { return }
+                guard didDismiss else {
+                    // Reset path (shouldDismiss flipped false): no action,
+                    // but re-arm so the next flip is captured.
+                    self.observeShouldDismiss(speechRecognizer: speechRecognizer)
+                    return
                 }
+                self.dismissObserver = nil
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                    self?.dismiss()
+                }
+                // No re-arm: we just tore the panel down. A subsequent
+                // `show()` will install a fresh observer.
             }
-            .store(in: &cancellables)
+        }
     }
 
     func dismiss() {
+        // R107: cancel the live Observation registration on manual
+        // teardown so a future `show()` starts with a clean slate.
+        dismissObserver = nil
         panel?.orderOut(nil)
         panel = nil
         cancellables.removeAll()
