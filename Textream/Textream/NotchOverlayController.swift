@@ -139,6 +139,13 @@ class NotchOverlayController: NSObject {
     var onNextPage: (() -> Void)?
     private var cancellables = Set<AnyCancellable>()
     private var isDismissing = false
+    // R108: live Observation registrations for the three flags the dismiss
+    // handler used to poll at 10 Hz. Each `speechObserver` re-arms itself
+    // after firing on the page-advance / dismiss reset cycle; once dismiss
+    // actually fires the observer is dropped (the session is over). The
+    // jump observer tracks `overlayContent.jumpToPageIndex` independently.
+    private var speechObserver: (() -> Void)?
+    private var jumpObserver: (() -> Void)?
     private var frameTracker: NotchFrameTracker?
     private var mouseTrackingTimer: AnyCancellable?
     private var cursorTrackingTimer: AnyCancellable?
@@ -518,6 +525,14 @@ class NotchOverlayController: NSObject {
             self.stopCursorTracking()
             self.removeStopButton()
             self.removeEscMonitor()
+            // R108: drop the event-driven dismiss trackers. The polling
+            // version was cancelled via cancellables.removeAll() — these
+            // trackers live outside cancellables and need their own
+            // clear. The observer's `!isDismissing` guard above prevents
+            // its teardown from firing, so we must release the closures
+            // here to avoid keeping the Session alive.
+            self.speechObserver = nil
+            self.jumpObserver = nil
             self.cancellables.removeAll()
             self.panel?.orderOut(nil)
             self.panel = nil
@@ -549,6 +564,10 @@ class NotchOverlayController: NSObject {
         stopCursorTracking()
         removeStopButton()
         removeEscMonitor()
+        // R108: clear the event-driven dismiss trackers on manual teardown.
+        // The previous polling version cancelled via cancellables.removeAll().
+        speechObserver = nil
+        jumpObserver = nil
         cancellables.removeAll()
         speechRecognizer.forceStop()
         speechRecognizer.recognizedCharCount = 0
@@ -560,26 +579,48 @@ class NotchOverlayController: NSObject {
     }
 
     private func observeDismiss() {
-        // Single timer polls all conditions instead of two separate timers
-        Timer.publish(every: 0.1, on: .main, in: .common)
-            .autoconnect()
-            .sink { [weak self] _ in
-                guard let self else { return }
+        // R108: replaced the previous 10 Hz Timer.publish polling block with
+        // two event-driven withObservationTracking registrations (one for
+        // the SpeechRecognizer flags, one for OverlayContent.jumpToPageIndex).
+        // Each registration fires within microseconds of the relevant flag
+        // flipping and burns zero CPU while idle. The SpeechRecognizer tracker
+        // re-arms itself on the page-advance reset cycle; once the dismiss
+        // flag actually fires both registrations are dropped (session over).
+        observeSpeechFlags()
+        observeJumpFlag()
+    }
 
-                // Check for page advance
-                if self.speechRecognizer.shouldAdvancePage {
-                    self.speechRecognizer.shouldAdvancePage = false
+    /// One-shot Observation tracking for `speechRecognizer.shouldAdvancePage`
+    /// and `speechRecognizer.shouldDismiss`. Re-arms on every fire EXCEPT
+    /// the final dismiss fire (session is over). (R108)
+    private func observeSpeechFlags() {
+        speechObserver = nil
+        withObservationTracking {
+            // Touch both properties inside the apply closure so the runtime
+            // registers a dependency on each key path. The returned value is
+            // unused — only the read matters.
+            _ = speechRecognizer.shouldAdvancePage
+            _ = speechRecognizer.shouldDismiss
+        } onChange: { [speechRecognizer] in
+            // onChange closure is @Sendable: only Sendable values out.
+            // Snapshot the two Bools to locals and hand the work — including
+            // the non-Sendable self + speechRecognizer captures the
+            // re-arm path needs — to a regular main-queue block.
+            let didAdvance = speechRecognizer.shouldAdvancePage
+            let didDismiss = speechRecognizer.shouldDismiss
+            DispatchQueue.main.async { [weak self, speechRecognizer] in
+                guard let self else { return }
+                // Page-advance handler (mirrors the polling branch above).
+                if didAdvance {
+                    speechRecognizer.shouldAdvancePage = false
                     self.onNextPage?()
                 }
-
-                // Check for page jump from page picker
-                if let targetIndex = self.overlayContent.jumpToPageIndex {
-                    self.overlayContent.jumpToPageIndex = nil
-                    TextreamService.shared.jumpToPage(index: targetIndex)
-                }
-
-                // Check for dismiss
-                if self.speechRecognizer.shouldDismiss, !self.isDismissing {
+                // Dismiss handler. Mirrors the polling branch but only
+                // schedules teardown when the flag actually flipped true
+                // (the previous polling version read the current value on
+                // every tick; the observation callback only fires when
+                // one of the two flags changes, so we use the snapshot).
+                if didDismiss, !self.isDismissing {
                     self.isDismissing = true
                     DispatchQueue.main.asyncAfter(deadline: .now() + dismissTeardownDelay) { [weak self] in
                         guard let self else { return }
@@ -591,12 +632,42 @@ class NotchOverlayController: NSObject {
                         self.panel?.orderOut(nil)
                         self.panel = nil
                         self.frameTracker = nil
-                        self.speechRecognizer.shouldDismiss = false
+                        speechRecognizer.shouldDismiss = false
                         self.onComplete?()
                     }
+                    // Session is over: drop all listeners so the next
+                    // init() starts from a clean slate.
+                    self.speechObserver = nil
+                    self.jumpObserver = nil
+                    return
                 }
+                // Reset path (page-advance cleared the flag; dismiss stayed
+                // false): re-arm so the next flip is captured.
+                self.observeSpeechFlags()
             }
-            .store(in: &cancellables)
+        }
+    }
+
+    /// One-shot Observation tracking for `overlayContent.jumpToPageIndex`.
+    /// Always re-arms because page jumps never tear down the session. (R108)
+    private func observeJumpFlag() {
+        jumpObserver = nil
+        withObservationTracking {
+            _ = overlayContent.jumpToPageIndex
+        } onChange: { [overlayContent] in
+            // @Sendable: snapshot the optional Int to a local. Reading the
+            // overlayContent property is fine because Int is Sendable.
+            let targetIndex = overlayContent.jumpToPageIndex
+            DispatchQueue.main.async { [weak self, overlayContent] in
+                guard let self else { return }
+                if let targetIndex {
+                    overlayContent.jumpToPageIndex = nil
+                    TextreamService.shared.jumpToPage(index: targetIndex)
+                }
+                // Always re-arm — page jumps don't end the session.
+                self.observeJumpFlag()
+            }
+        }
     }
 
     var isShowing: Bool {
