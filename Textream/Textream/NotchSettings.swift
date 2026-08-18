@@ -331,11 +331,17 @@ class NotchSettings {
     }
 
     var fontSizePreset: FontSizePreset {
-        didSet { UserDefaults.standard.set(fontSizePreset.rawValue, forKey: "fontSizePreset") }
+        didSet {
+            UserDefaults.standard.set(fontSizePreset.rawValue, forKey: "fontSizePreset")
+            cachedFont = nil
+        }
     }
 
     var fontFamilyPreset: FontFamilyPreset {
-        didSet { UserDefaults.standard.set(fontFamilyPreset.rawValue, forKey: "fontFamilyPreset") }
+        didSet {
+            UserDefaults.standard.set(fontFamilyPreset.rawValue, forKey: "fontFamilyPreset")
+            cachedFont = nil
+        }
     }
 
     var fontColorPreset: FontColorPreset {
@@ -449,8 +455,14 @@ class NotchSettings {
         didSet { UserDefaults.standard.set(Int(directorServerPort), forKey: "directorServerPort") }
     }
 
+    @ObservationIgnored
+    private var cachedFont: NSFont?
+
     var font: NSFont {
-        fontFamilyPreset.font(size: fontSizePreset.pointSize)
+        if let cached = cachedFont { return cached }
+        let f = fontFamilyPreset.font(size: fontSizePreset.pointSize)
+        cachedFont = f
+        return f
     }
 
     static let defaultWidth: CGFloat = 340
