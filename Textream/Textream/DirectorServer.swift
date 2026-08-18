@@ -323,8 +323,17 @@ class DirectorServer {
         // the function and keeps the body free of inline @Observable access.
         let fontColor = NotchSettings.shared.fontColorPreset.cssColor
         let cueColor = NotchSettings.shared.cueColorPreset.cssColor
+        // R106: hoist the SpeechRecognizer weak reference once per tick. The
+        // body previously did 4 separate `speechRecognizer?.X` reads
+        // (recognizedCharCount + isListening + lastSpokenText + audioLevels).
+        // Each read paid a weak-ref resolve plus an @Observable proxy access
+        // for the stored property. Hoisting collapses to a single weak
+        // resolve + 1 nil-check, with subsequent property reads reusing the
+        // cached local. Saves 3 proxy accesses per tick × 10 Hz = 30 wasted
+        // @Observable accesses/sec.
+        let rec = speechRecognizer
 
-        let charCount = speechRecognizer?.recognizedCharCount ?? 0
+        let charCount = rec?.recognizedCharCount ?? 0
         let effective = min(charCount, totalCharCount)
         let isDone = totalCharCount > 0 && effective >= totalCharCount
 
@@ -333,11 +342,11 @@ class DirectorServer {
             totalCharCount: totalCharCount,
             isActive: true,
             isDone: isDone,
-            isListening: speechRecognizer?.isListening ?? false,
+            isListening: rec?.isListening ?? false,
             fontColor: fontColor,
             cueColor: cueColor,
-            lastSpokenText: speechRecognizer?.lastSpokenText ?? "",
-            audioLevels: speechRecognizer?.audioLevels ?? []
+            lastSpokenText: rec?.lastSpokenText ?? "",
+            audioLevels: rec?.audioLevels ?? []
         )
         broadcast(state)
     }

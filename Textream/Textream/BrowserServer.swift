@@ -286,6 +286,17 @@ class BrowserServer {
         let speed = NotchSettings.shared.scrollSpeed
         let fontColor = NotchSettings.shared.fontColorPreset.cssColor
         let cueColor = NotchSettings.shared.cueColorPreset.cssColor
+        // R106: hoist the SpeechRecognizer weak reference once per tick. The
+        // body previously did up to 6 separate `speechRecognizer?.X` reads —
+        // wordTracking: 4 (recognizedCharCount + audioLevels + isListening +
+        // lastSpokenText), classic: 3 (audioLevels + isListening +
+        // lastSpokenText), silencePaused: 5 (adds isListening + isSpeaking
+        // in the switch). Each read paid a weak-ref resolve plus an
+        // @Observable proxy access for the stored property. Hoisting
+        // collapses to a single weak-resolve + 1 nil-check, with subsequent
+        // property reads reusing the cached local. Saves 2-5 proxy
+        // accesses per tick × 10 Hz = 20-50 wasted @Observable accesses/sec.
+        let rec = speechRecognizer
 
         let charCount: Int
         switch mode {
@@ -294,7 +305,7 @@ class BrowserServer {
             // `scrollDone` early-stop is meaningless — skip the redundant
             // charOffsetForWordProgress() call (saves 1 O(1) prefix-sum
             // lookup per 100 ms tick × 10 Hz = 10 wasted lookups/sec). (R38)
-            charCount = speechRecognizer?.recognizedCharCount ?? 0
+            charCount = rec?.recognizedCharCount ?? 0
         case .classic:
             // R53: cache the first prefix-sum lookup. When scrollDone is
             // true (end-of-script, common while speaker finishes) the
@@ -311,7 +322,7 @@ class BrowserServer {
         case .silencePaused:
             let offsetBefore = charOffsetForWordProgress(timerWordProgress)
             let scrollDone = totalCharCount > 0 && offsetBefore >= totalCharCount
-            if !scrollDone && speechRecognizer?.isListening == true && (speechRecognizer?.isSpeaking ?? false) {
+            if !scrollDone && rec?.isListening == true && (rec?.isSpeaking ?? false) {
                 timerWordProgress += speed * 0.1
                 charCount = charOffsetForWordProgress(timerWordProgress)
             } else {
@@ -331,15 +342,15 @@ class BrowserServer {
             words: nil, // R60: deferred — see broadcast(_:words:) for the include-words decision
             highlightedCharCount: effective,
             totalCharCount: totalCharCount,
-            audioLevels: speechRecognizer?.audioLevels ?? [],
-            isListening: speechRecognizer?.isListening ?? false,
+            audioLevels: rec?.audioLevels ?? [],
+            isListening: rec?.isListening ?? false,
             isDone: isDone,
             fontColor: fontColor,
             cueColor: cueColor,
             hasNextPage: hasNextPage,
             isActive: true,
             highlightWords: highlightWords,
-            lastSpokenText: speechRecognizer?.lastSpokenText ?? ""
+            lastSpokenText: rec?.lastSpokenText ?? ""
         )
         broadcast(state, words: words)
     }
