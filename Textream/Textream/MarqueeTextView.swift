@@ -1078,18 +1078,35 @@ struct AudioWaveformProgressView: View {
         HStack(alignment: .center, spacing: 2) {
             let n = levels.count
             let denom = max(1, n - 1)
+            // R82: hoist the two constant Colors above the ForEach. The
+            // lit / unlit colors don't depend on `index` or `level`, so
+            // re-evaluating them inside every bar's `.fill` was pure
+            // waste: 30 bars × 2 colors = 60 Color struct allocations per
+            // body render. AudioWaveformProgressView_Observer re-renders
+            // at 43 Hz (one per audioLevels buffer mutation while the
+            // SpeechRecognizer is recording), so the old code did ~2580
+            // Color allocations/sec. Hoisting collapses that to 2 Color
+            // values per body render (86/sec). The ForEach closure body
+            // captures both locals from enclosing scope, same pattern as
+            // the body-level `denom` cache already in place.
+            let lit = Color.yellow.opacity(0.9)
+            let unlit = Color.white.opacity(0.15)
+            // R82: companion hoist of the constant `.easeOut(duration:
+            // 0.08)` animation. Without this, the 30 bars each rebuilt
+            // an Animation struct per body render (~1290 Animation
+            // allocations/sec at 43 Hz). Companion change in
+            // AudioWaveformView below. Capture by enclosing scope, same
+            // as `lit`/`unlit`.
+            let levelAnim = Animation.easeOut(duration: 0.08)
             ForEach(0..<n, id: \.self) { index in
                 let level = levels[index]
                 let barProgress = Double(index) / Double(denom)
                 let isLit = barProgress <= progress
 
                 RoundedRectangle(cornerRadius: 1.5)
-                    .fill(isLit
-                          ? Color.yellow.opacity(0.9)
-                          : Color.white.opacity(0.15)
-                    )
+                    .fill(isLit ? lit : unlit)
                     .frame(width: 3, height: max(3, level * 28))
-                    .animation(.easeOut(duration: 0.08), value: level)
+                    .animation(levelAnim, value: level)
             }
         }
     }
@@ -1134,12 +1151,23 @@ struct AudioWaveformView: View {
     var body: some View {
         HStack(alignment: .center, spacing: 2) {
             let n = levels.count
+            // R82: hoist the constant animation outside the ForEach. The
+            // `.easeOut(duration: 0.08)` value is identical for every bar
+            // — re-evaluating it per-bar rebuilt the Animation struct 40
+            // times per body render. AudioWaveformView re-renders at the
+            // DictationManager audio buffer rate (~43 Hz when active),
+            // so the old code did ~1720 Animation allocations/sec. Hoist
+            // to a single body-level local captured by the ForEach
+            // closure. Companion hoist to AudioWaveformProgressView
+            // (lit/unlit Color caches above) — both views share the same
+            // .animation(.easeOut(duration: 0.08), value: level) shape.
+            let levelAnim = Animation.easeOut(duration: 0.08)
             ForEach(0..<n, id: \.self) { index in
                 let level = levels[index]
                 RoundedRectangle(cornerRadius: 1.5)
                     .fill(color.opacity(0.4 + Double(level) * 0.6))
                     .frame(width: 3, height: max(3, level * 28 + 3))
-                    .animation(.easeOut(duration: 0.08), value: level)
+                    .animation(levelAnim, value: level)
             }
         }
     }
