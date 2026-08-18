@@ -206,29 +206,38 @@ struct ContentView: View {
         }
 
         dictation.onTextUpdate = { [self] spokenText in
+            // R90: Swift `String.count` walks the full grapheme cluster
+            // sequence (O(N) per call). Cache it once per tick — the
+            // previous code read `spokenText.count` 3× and `text.count`
+            // 2× per ASR partial. Also drop the `String(spokenText.suffix(_:))`
+            // allocation: a `Substring` view is enough since `spokenText`
+            // is `let`-bound by the closure and outlives the concat below.
+            let spokenCount = spokenText.count
             // Track raw length regardless of override so resume-from-pause still works.
-            lastRawSpokenLength = spokenText.count
+            lastRawSpokenLength = spokenCount
             // User has taken control (clicked elsewhere / scrolled). Don't let ASR
             // partials overwrite their text or steal the caret.
             guard !userManualOverride else { return }
 
-            // Only use the portion after the skip offset
-            let effectiveText: String
-            if spokenSkipOffset < spokenText.count {
-                effectiveText = String(spokenText.suffix(spokenText.count - spokenSkipOffset))
-            } else {
-                effectiveText = ""
-            }
-            guard !effectiveText.isEmpty else { return }
+            // Only use the portion after the skip offset. Substring view is
+            // safe here — `spokenText` is `let`-bound by this closure and
+            // never mutated. The previous `String(suffix(_:))` allocation
+            // is eliminated; the downstream `sep + effectiveText` String
+            // concat runs on a Substring just as well.
+            guard spokenSkipOffset < spokenCount else { return }
+            let effectiveText = spokenText.suffix(spokenCount - spokenSkipOffset)
 
             let pageIndex = service.currentPageIndex
             guard pageIndex < service.pages.count else { return }
             var text = service.pages[pageIndex]
 
-            // Remove the old segment text
-            let safeStart = min(segmentStart, text.count)
+            // Cache `text.count` BEFORE removeSubrange; the post-mutation
+            // read on line 238 below reflects the new length and stays
+            // untouched.
+            let initialTextCount = text.count
+            let safeStart = min(segmentStart, initialTextCount)
             let removeStart = text.index(text.startIndex, offsetBy: safeStart)
-            let safeLen = min(segmentLength, text.count - safeStart)
+            let safeLen = min(segmentLength, initialTextCount - safeStart)
             let removeEnd = text.index(removeStart, offsetBy: safeLen)
             text.removeSubrange(removeStart..<removeEnd)
 
