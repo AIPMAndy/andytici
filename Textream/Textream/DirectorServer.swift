@@ -69,6 +69,9 @@ class DirectorServer {
     // Cached JSONEncoder: 10Hz broadcast loop was allocating a fresh encoder
     // each tick. Reuse one instance. (R33)
     private let jsonEncoder = JSONEncoder()
+    // R112: cache the WebSocket metadata. opcode .text is the only opcode
+    // the server sends; allocating per-tick was 10 allocs/sec waste.
+    private let wsMetadata = NWProtocolWebSocket.Metadata(opcode: .text)
     // R91: mirror of R33 for the incoming WebSocket message parser.
     // `handleIncomingMessage` previously did `JSONDecoder().decode(...)` on
     // every WS frame — auth + setText + N×updateText + stop. Each
@@ -390,8 +393,12 @@ class DirectorServer {
 
         let connections = authenticatedConnectionsList
         guard !connections.isEmpty else { return }
-        let meta = NWProtocolWebSocket.Metadata(opcode: .text)
-        let ctx = NWConnection.ContentContext(identifier: "ws", metadata: [meta])
+        // R112: reuse the cached wsMetadata + build a fresh ContentContext
+        // (ContentContext holds an immutable metadata array, but the
+        // network stack may carry per-message flags; only the metadata
+        // is reusable — saving the heavy NWProtocolWebSocket.Metadata
+        // allocation). 10 allocs/sec at 10 Hz broadcast.
+        let ctx = NWConnection.ContentContext(identifier: "ws", metadata: [wsMetadata])
 
         broadcastQueue.async {
             for conn in connections {

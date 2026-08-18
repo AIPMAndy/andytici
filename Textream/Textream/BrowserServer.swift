@@ -89,6 +89,11 @@ class BrowserServer {
     // source edit, fresh client connection). On steady 10Hz ticks during
     // ASR the words payload is omitted — the browser keeps `cachedWords`.
     private var lastBroadcastWordsHash: Int = 0
+    // R112: cache the WebSocket metadata + content context. Both are
+    // immutable per-server constants (opcode .text, identifier "ws") but
+    // broadcast() was re-allocating them every 10 Hz tick. 10 allocs/sec
+    // saved on this server; same pattern mirrored to DirectorServer.
+    private let wsMetadata = NWProtocolWebSocket.Metadata(opcode: .text)
 
     private func cheapSignatureChanged(
         highlightedCharCount: Int, isDone: Bool, isListening: Bool,
@@ -408,8 +413,10 @@ class BrowserServer {
         }
         lastBroadcastState = data
         cacheSignature(resolvedState)
-        let meta = NWProtocolWebSocket.Metadata(opcode: .text)
-        let ctx = NWConnection.ContentContext(identifier: "ws", metadata: [meta])
+        // R112: reuse cached WebSocket metadata. The opcode and identifier
+        // never change per-server; allocating per-tick was pure waste
+        // (10 allocs/sec at 10 Hz broadcast).
+        let ctx = NWConnection.ContentContext(identifier: "ws", metadata: [wsMetadata])
         for conn in wsConnections {
             conn.send(content: data, contentContext: ctx, completion: .idempotent)
         }
