@@ -99,11 +99,57 @@ class SpeechRecognizer {
             // R56: also cache tail3/tail5 here so ASR partial handlers don't
             // each re-split. didSet runs once per assignment (both call sites
             // now only do `self.lastSpokenText = spoken` + matchCharacters).
+            // R119: replace `split(separator:) + joined(separator:)` with a
+            // single backward scan + 1 String allocation. The split form
+            // allocated per ASR partial: 1 Array<Substring> + ~wordCount
+            // Substring views + 2 Array.Slice + 2 joined String (≈10
+            // allocations per partial at 5–20 Hz). The reverse scan walks
+            // ≤N Characters to find N-1 word-boundary transitions and
+            // returns the trailing substring directly — 1 allocation.
+            // STT partials are well-formed (no leading/trailing whitespace,
+            // no double spaces), matching the join semantics of the old
+            // `split` + `joined` chain.
             lastSpokenTextUtf16Count = lastSpokenText.utf16.count
-            let words = lastSpokenText.split(separator: " ")
-            _lastSpokenTail3 = words.suffix(3).joined(separator: " ")
-            _lastSpokenTail5 = words.suffix(5).joined(separator: " ")
+            _lastSpokenTail3 = Self.trailingWords(of: lastSpokenText, count: 3)
+            _lastSpokenTail5 = Self.trailingWords(of: lastSpokenText, count: 5)
         }
+    }
+
+    /// Reverse-scan `s` for the (count-1)-th word boundary (non-space →
+    /// space transition) and return the trailing substring from there.
+    /// Replaces `s.split(separator: " ").suffix(count).joined(separator: " ")`,
+    /// which allocates an Array<Substring>, Slice, and final String per
+    /// call. The reverse walk stays O(N) but bounds itself: it stops as
+    /// soon as the (count-1)-th transition is found, so for typical STT
+    /// partials (5–10 words, count=3 or 5) it reads ≤N Characters and
+    /// never re-allocates the [Substring] intermediates. Single String
+    /// allocation for the result.
+    private static func trailingWords(of s: String, count n: Int) -> String {
+        guard n > 0 else { return "" }
+        let targetSpaces = n - 1
+        var spacesFound = 0
+        var idx = s.endIndex
+        // `lastWasSpace=true` seeds the state so any leading run of spaces
+        // never counts as a transition (matches `split`'s
+        // omittingEmptySubsequences default). Trailing spaces similarly
+        // never count.
+        var lastWasSpace = true
+        while idx > s.startIndex {
+            idx = s.index(before: idx)
+            if s[idx] == " " {
+                if !lastWasSpace {
+                    spacesFound += 1
+                    if spacesFound == targetSpaces {
+                        let startIdx = s.index(after: idx)
+                        return String(s[startIdx..<s.endIndex])
+                    }
+                }
+                lastWasSpace = true
+            } else {
+                lastWasSpace = false
+            }
+        }
+        return s
     }
     /// Cached UTF-16 length of lastSpokenText. Avoids O(N) walk on every ASR
     /// partial in matchCharacters' prefix-trim calculation.
