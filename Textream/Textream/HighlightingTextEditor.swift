@@ -76,13 +76,31 @@ struct HighlightingTextEditor: NSViewRepresentable {
         // Keep the coordinator's callback in sync with the latest binding value.
         context.coordinator.onUserEdit = onUserEdit
 
-        if textView.string != text {
-            let selectedRanges = textView.selectedRanges
-            let prevText = context.coordinator.lastAppliedText
-            let prevLen = context.coordinator.lastAppliedTextLength
-            let newLen = (text as NSString).length
-            textView.string = text
-            textView.selectedRanges = selectedRanges
+        // R104: O(1) hash-based change detection. The previous
+        // `textView.string != text` was an O(N) String comparison that ran
+        // on every updateNSView call. updateNSView fires on every body
+        // re-render that touches the editor — typically ~30 Hz during
+        // dictation for caret moves, highlightRange prop changes, and
+        // onUserEdit closure-identity churn (each parent re-render
+        // creates a fresh `onUserEdit` closure that SwiftUI sees as a
+        // changed prop, triggering updateNSView even when text didn't
+        // change). For a 50 KB script that's ~1.5M wasted comparisons/sec.
+        // Swift's String caches its hashValue on the struct, so
+        // `text.hashValue` is O(1) once SwiftUI delivers the binding.
+        // Storing the hash of the last-synced text lets us fast-skip the
+        // O(N) compare when the binding hasn't changed. The O(N) compare
+        // is still paid on the text-changed path and on the first call —
+        // both rare relative to non-text re-renders. Hash collisions in
+        // Swift are ~2^-64 per pair, so we accept unhandled collisions
+        // rather than pay an O(N) verify per call.
+        if text.hashValue != context.coordinator.lastSyncedTextHash {
+            if textView.string != text {
+                let selectedRanges = textView.selectedRanges
+                let prevText = context.coordinator.lastAppliedText
+                let prevLen = context.coordinator.lastAppliedTextLength
+                let newLen = (text as NSString).length
+                textView.string = text
+                textView.selectedRanges = selectedRanges
 
             // Detect ASR append: the new text purely extends the previous
             // one. In that case only the new chars need their [bracket]
@@ -101,22 +119,30 @@ struct HighlightingTextEditor: NSViewRepresentable {
                 context.coordinator.applyHighlighting(textView)
             }
             context.coordinator.lastAppliedText = text
-            context.coordinator.lastAppliedTextLength = newLen
-            // R88: hoist `updateWritingDirection` inside the text-changed
-            // guard. The previous code called it unconditionally after the
-            // `if textView.string != text { ... }` block. `textBaseDirection`
-            // walks every Unicode scalar of `text` (O(N) via `for scalar in
-            // text.unicodeScalars { ... isAlphabetic ... }`) and produces an
-            // identical result for identical text. updateNSView also fires on
-            // non-text changes (caretPosition binding, highlightRange prop,
-            // onUserEdit closure-identity change) — ~3 times per ASR partial
-            // at 5 Hz, so ~15 wasted textBaseDirection walks/sec during
-            // dictation. `makeNSView` (line 68) and `textDidChange`
-            // (line 173) already invoke updateWritingDirection explicitly for
-            // their respective first-keystroke and binding-flush paths, so
-            // the only path that legitimately needed it here was the
-            // text-changed branch itself.
-            updateWritingDirection(textView, text: text)
+                context.coordinator.lastAppliedTextLength = newLen
+                // R104: cache the hash of the text we just resynced to.
+                // The outer `if text.hashValue != ...` guard reads this on
+                // the next updateNSView call; without updating it here, every
+                // future caret-move / highlightRange / onUserEdit call would
+                // re-enter the outer guard and pay the O(N) verify on
+                // `textView.string != text`.
+                context.coordinator.lastSyncedTextHash = text.hashValue
+                // R88: hoist `updateWritingDirection` inside the text-changed
+                // guard. The previous code called it unconditionally after the
+                // `if textView.string != text { ... }` block. `textBaseDirection`
+                // walks every Unicode scalar of `text` (O(N) via `for scalar in
+                // text.unicodeScalars { ... isAlphabetic ... }`) and produces an
+                // identical result for identical text. updateNSView also fires on
+                // non-text changes (caretPosition binding, highlightRange prop,
+                // onUserEdit closure-identity change) — ~3 times per ASR partial
+                // at 5 Hz, so ~15 wasted textBaseDirection walks/sec during
+                // dictation. `makeNSView` (line 68) and `textDidChange`
+                // (line 173) already invoke updateWritingDirection explicitly for
+                // their respective first-keystroke and binding-flush paths, so
+                // the only path that legitimately needed it here was the
+                // text-changed branch itself.
+                updateWritingDirection(textView, text: text)
+            }
         }
 
         // Apply bump highlight on newly dictated range
@@ -167,6 +193,12 @@ struct HighlightingTextEditor: NSViewRepresentable {
         // across the class boundary (Swift's `private` is type-scoped).
         fileprivate var lastAppliedText: String = ""
         fileprivate var lastAppliedTextLength: Int = 0
+
+        // R104: hash of the text most recently resynced into textView.string.
+        // The outer `if text.hashValue != lastSyncedTextHash` guard in
+        // updateNSView uses this as the O(1) fast path. Updated inside the
+        // resync block after every successful textView write.
+        fileprivate var lastSyncedTextHash: Int = 0
 
         // Cached derived attributes. NSFontManager.shared.convert() and
         // NSColor.withAlphaComponent() are both non-trivial; recomputing
