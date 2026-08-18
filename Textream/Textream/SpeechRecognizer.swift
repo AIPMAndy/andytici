@@ -85,6 +85,16 @@ class SpeechRecognizer {
     var audioLevels: [CGFloat] = Array(repeating: 0, count: 30)
     var lastSpokenText: String = "" {
         didSet {
+            // R96: STT recognizers routinely re-emit the same partial verbatim
+            // between acoustic refinements. matchCharacters (R62) already
+            // guards on `partial != self.lastSpokenText`, but the didSet
+            // pre-compute path was not — identical re-emits re-walked utf16,
+            // re-split, re-joined two String tails, and re-fired @Observable
+            // notifications on _lastSpokenTail3 / _lastSpokenTail5 (which
+            // propagate to LastSpokenTailText → SwiftUI Text diff). Skip when
+            // value is unchanged so cached tails stay correct from the prior
+            // different-value assignment.
+            guard oldValue != lastSpokenText else { return }
             // R56: also cache tail3/tail5 here so ASR partial handlers don't
             // each re-split. didSet runs once per assignment (both call sites
             // now only do `self.lastSpokenText = spoken` + matchCharacters).
