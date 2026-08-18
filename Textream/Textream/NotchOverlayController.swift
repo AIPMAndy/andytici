@@ -65,6 +65,28 @@ class OverlayContent {
     }
 }
 
+// R93: file-level Color cache for hot-path overlay literals. Both
+// prompterView and floatingPrompterView re-render at 20 Hz in
+// classic/silencePaused modes; previously each render allocated
+// ~19 fresh Color structs via .opacity() calls. Top-level file
+// lets are lazily initialized once per process, then reused for
+// every render across NotchOverlayView, FloatingOverlayView, and
+// NotchOverlayController alike — zero per-render Color alloc.
+// (Class-level static lets can't work here because the views that
+// use these colors are separate types; `Self.` would resolve to the
+// enclosing struct, not the controller.)
+private let white60 = Color.white.opacity(0.6)
+private let white15 = Color.white.opacity(0.15)
+private let white80 = Color.white.opacity(0.8)
+private let white50 = Color.white.opacity(0.5)
+private let white30 = Color.white.opacity(0.3)
+private let white25 = Color.white.opacity(0.25)
+private let yellow80 = Color.yellow.opacity(0.8)
+private let yellow70 = Color.yellow.opacity(0.7)
+private let yellow10 = Color.yellow.opacity(0.1)
+private let white05 = Color.white.opacity(0.05)
+private let red90 = Color.red.opacity(0.9)
+
 class NotchOverlayController: NSObject {
     private let cursorOffset: CGFloat = 8
     private let screenEdgeMargin: CGFloat = 5
@@ -1067,7 +1089,7 @@ struct NotchOverlayView: View {
                 if let error = speechRecognizer.error {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.red.opacity(0.9))
+                        .foregroundStyle(red90)
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1099,9 +1121,9 @@ struct NotchOverlayView: View {
                         } label: {
                             Image(systemName: "forward.fill")
                                 .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(.white.opacity(0.6))
+                                .foregroundStyle(white60)
                                 .frame(width: 24, height: 24)
-                                .background(.white.opacity(0.15))
+                                .background(white15)
                                 .clipShape(Circle())
                         }
                         .buttonStyle(.plain)
@@ -1117,9 +1139,9 @@ struct NotchOverlayView: View {
                         } label: {
                             Image(systemName: "backward.end.fill")
                                 .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(.white.opacity(0.6))
+                                .foregroundStyle(white60)
                                 .frame(width: 24, height: 24)
-                                .background(.white.opacity(0.15))
+                                .background(white15)
                                 .clipShape(Circle())
                         }
                         .buttonStyle(.plain)
@@ -1138,9 +1160,9 @@ struct NotchOverlayView: View {
                     } label: {
                         Image(systemName: isPaused ? "play.fill" : "pause.fill")
                             .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(isPaused ? .white.opacity(0.6) : .yellow.opacity(0.8))
+                            .foregroundStyle(isPaused ? white60 : yellow80)
                             .frame(width: 24, height: 24)
-                            .background(.white.opacity(0.15))
+                            .background(white15)
                             .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
@@ -1156,15 +1178,15 @@ struct NotchOverlayView: View {
                             if speechRecognizer.isStarting {
                                 ProgressView()
                                     .controlSize(.mini)
-                                    .tint(.white.opacity(0.8))
+                                    .tint(white80)
                             } else {
                                 Image(systemName: speechRecognizer.isListening ? "mic.fill" : "mic.slash.fill")
                                     .font(.system(size: 10, weight: .bold))
                             }
                         }
-                        .foregroundStyle(speechRecognizer.isListening ? .yellow.opacity(0.8) : .white.opacity(0.6))
+                        .foregroundStyle(speechRecognizer.isListening ? yellow80 : white60)
                         .frame(width: 24, height: 24)
-                        .background(.white.opacity(0.15))
+                        .background(white15)
                         .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
@@ -1176,9 +1198,9 @@ struct NotchOverlayView: View {
                 } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.6))
+                        .foregroundStyle(white60)
                         .frame(width: 24, height: 24)
-                        .background(.white.opacity(0.15))
+                        .background(white15)
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
@@ -1192,7 +1214,7 @@ struct NotchOverlayView: View {
                 VStack(spacing: 0) {
                     Spacer().frame(height: 4)
                     RoundedRectangle(cornerRadius: 2)
-                        .fill(Color.white.opacity(0.25))
+                        .fill(white25)
                         .frame(width: 36, height: 4)
                     Spacer().frame(height: 8)
                 }
@@ -1236,7 +1258,7 @@ struct NotchOverlayView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("跳转到页面")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.5))
+                    .foregroundStyle(white50)
                     .padding(.bottom, 2)
 
                 ForEach(0..<content.pageCount, id: \.self) { i in
@@ -1249,11 +1271,11 @@ struct NotchOverlayView: View {
                             HStack(spacing: 8) {
                                 Text("\(i + 1)")
                                     .font(.system(size: 12, weight: .bold, design: .monospaced))
-                                    .foregroundStyle(i == content.currentPageIndex ? .yellow : .white.opacity(0.8))
+                                    .foregroundStyle(i == content.currentPageIndex ? .yellow : white80)
                                     .frame(width: 20)
                                 Text(preview)
                                     .font(.system(size: 12, weight: .regular))
-                                    .foregroundStyle(i == content.currentPageIndex ? .yellow.opacity(0.7) : .white.opacity(0.5))
+                                    .foregroundStyle(i == content.currentPageIndex ? yellow70 : white50)
                                     .lineLimit(1)
                                     .truncationMode(.tail)
                                 Spacer()
@@ -1262,7 +1284,7 @@ struct NotchOverlayView: View {
                             .padding(.horizontal, 8)
                             .background(
                                 RoundedRectangle(cornerRadius: 6)
-                                    .fill(i == content.currentPageIndex ? Color.yellow.opacity(0.1) : Color.white.opacity(0.05))
+                                    .fill(i == content.currentPageIndex ? yellow10 : white05)
                             )
                         }
                         .buttonStyle(.plain)
@@ -1271,7 +1293,7 @@ struct NotchOverlayView: View {
 
                 Text("点击页面跳转")
                     .font(.system(size: 10))
-                    .foregroundStyle(.white.opacity(0.3))
+                    .foregroundStyle(white30)
                     .padding(.top, 4)
             }
             .padding(.horizontal, 12)
@@ -1320,7 +1342,7 @@ struct NotchOverlayView: View {
                         VStack(spacing: 4) {
                             Text("下一页")
                                 .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(.white.opacity(0.5))
+                                .foregroundStyle(white50)
                             Image(systemName: "forward.fill")
                                 .font(.system(size: 18, weight: .bold))
                                 .foregroundStyle(.white)
@@ -1625,7 +1647,7 @@ struct FloatingOverlayView: View {
                 if let error = speechRecognizer.error {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.red.opacity(0.9))
+                        .foregroundStyle(red90)
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1648,9 +1670,9 @@ struct FloatingOverlayView: View {
                         } label: {
                             Image(systemName: "forward.fill")
                                 .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(.white.opacity(0.6))
+                                .foregroundStyle(white60)
                                 .frame(width: 24, height: 24)
-                                .background(.white.opacity(0.15))
+                                .background(white15)
                                 .clipShape(Circle())
                         }
                         .buttonStyle(.plain)
@@ -1666,9 +1688,9 @@ struct FloatingOverlayView: View {
                         } label: {
                             Image(systemName: "backward.end.fill")
                                 .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(.white.opacity(0.6))
+                                .foregroundStyle(white60)
                                 .frame(width: 24, height: 24)
-                                .background(.white.opacity(0.15))
+                                .background(white15)
                                 .clipShape(Circle())
                         }
                         .buttonStyle(.plain)
@@ -1688,9 +1710,9 @@ struct FloatingOverlayView: View {
                         } label: {
                             Image(systemName: isPaused ? "play.fill" : "pause.fill")
                                 .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(isPaused ? .white.opacity(0.6) : .yellow.opacity(0.8))
+                                .foregroundStyle(isPaused ? white60 : yellow80)
                                 .frame(width: 24, height: 24)
-                                .background(.white.opacity(0.15))
+                                .background(white15)
                                 .clipShape(Circle())
                         }
                         .buttonStyle(.plain)
@@ -1706,15 +1728,15 @@ struct FloatingOverlayView: View {
                                 if speechRecognizer.isStarting {
                                     ProgressView()
                                         .controlSize(.mini)
-                                        .tint(.white.opacity(0.8))
+                                        .tint(white80)
                                 } else {
                                     Image(systemName: speechRecognizer.isListening ? "mic.fill" : "mic.slash.fill")
                                         .font(.system(size: 10, weight: .bold))
                                 }
                             }
-                            .foregroundStyle(speechRecognizer.isListening ? .yellow.opacity(0.8) : .white.opacity(0.6))
+                            .foregroundStyle(speechRecognizer.isListening ? yellow80 : white60)
                             .frame(width: 24, height: 24)
-                            .background(.white.opacity(0.15))
+                            .background(white15)
                             .clipShape(Circle())
                         }
                         .buttonStyle(.plain)
@@ -1726,9 +1748,9 @@ struct FloatingOverlayView: View {
                     } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.white.opacity(0.6))
+                            .foregroundStyle(white60)
                             .frame(width: 24, height: 24)
-                            .background(.white.opacity(0.15))
+                            .background(white15)
                             .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
@@ -1766,7 +1788,7 @@ struct FloatingOverlayView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("跳转到页面")
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.5))
+                    .foregroundStyle(white50)
                     .padding(.bottom, 4)
 
                 ForEach(0..<content.pageCount, id: \.self) { i in
@@ -1779,11 +1801,11 @@ struct FloatingOverlayView: View {
                             HStack(spacing: 10) {
                                 Text("\(i + 1)")
                                     .font(.system(size: 14, weight: .bold, design: .monospaced))
-                                    .foregroundStyle(i == content.currentPageIndex ? .yellow : .white.opacity(0.8))
+                                    .foregroundStyle(i == content.currentPageIndex ? .yellow : white80)
                                     .frame(width: 24)
                                 Text(preview)
                                     .font(.system(size: 13, weight: .regular))
-                                    .foregroundStyle(i == content.currentPageIndex ? .yellow.opacity(0.7) : .white.opacity(0.5))
+                                    .foregroundStyle(i == content.currentPageIndex ? yellow70 : white50)
                                     .lineLimit(1)
                                     .truncationMode(.tail)
                                 Spacer()
@@ -1792,7 +1814,7 @@ struct FloatingOverlayView: View {
                             .padding(.horizontal, 10)
                             .background(
                                 RoundedRectangle(cornerRadius: 8)
-                                    .fill(i == content.currentPageIndex ? Color.yellow.opacity(0.1) : Color.white.opacity(0.05))
+                                    .fill(i == content.currentPageIndex ? yellow10 : white05)
                             )
                         }
                         .buttonStyle(.plain)
@@ -1801,7 +1823,7 @@ struct FloatingOverlayView: View {
 
                 Text("点击页面跳转")
                     .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.3))
+                    .foregroundStyle(white30)
                     .padding(.top, 4)
             }
             .padding(.horizontal, 16)
