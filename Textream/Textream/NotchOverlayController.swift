@@ -18,9 +18,14 @@ class NotchFrameTracker {
         didSet { updatePanel() }
     }
     weak var panel: NSPanel?
-    var screenMidX: CGFloat = 0
-    var screenMaxY: CGFloat = 0
-    var menuBarHeight: CGFloat = 0
+    // R99: geometry fields are only read by updatePanel() (a local method,
+    // not a SwiftUI body) and written by the controller on screen layout
+    // changes. No view observes them. Tagging them @ObservationIgnored
+    // skips registrar codegen on each drag tick / layout-change write —
+    // a small but free win that mirrors R98's SpeechRecognizer cleanup.
+    @ObservationIgnored var screenMidX: CGFloat = 0
+    @ObservationIgnored var screenMaxY: CGFloat = 0
+    @ObservationIgnored var menuBarHeight: CGFloat = 0
 
     func updatePanel() {
         guard let panel else { return }
