@@ -294,6 +294,23 @@ struct ExternalDisplayView: View {
             let cueUnread = NotchSettings.shared.cueBrightness.unreadOpacity
             let cueRead = NotchSettings.shared.cueBrightness.readOpacity
             let mode = listeningMode
+            // R80: inline isEffectivelyListening switch on the cached `mode`
+            // local. External display version's classic branch returns
+            // `true` (no pause concept — it's a read-only display).
+            // Wrap in an immediately-invoked closure so the switch is an
+            // expression returning Bool rather than a Void statement —
+            // GeometryReader's content closure is @ViewBuilder, and the
+            // assignment-only switch form collides with buildExpression
+            // (the previous form built successfully outside @ViewBuilder
+            // scopes but failed here, hence the IIFE).
+            let effectiveListening: Bool = {
+                switch mode {
+                case .wordTracking, .silencePaused:
+                    return speechRecognizer.isListening
+                case .classic:
+                    return true
+                }
+            }()
 
             VStack(spacing: 0) {
                 Spacer().frame(height: 20)
@@ -327,7 +344,7 @@ struct ExternalDisplayView: View {
                     // R78: served from `mode` local.
                     smoothScroll: mode != .wordTracking,
                     smoothWordProgress: timerWordProgress,
-                    isListening: isEffectivelyListening
+                    isListening: effectiveListening
                 )
                 .padding(.horizontal, hPad)
 

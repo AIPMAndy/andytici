@@ -1002,6 +1002,22 @@ struct NotchOverlayView: View {
         let cueUnread = NotchSettings.shared.cueBrightness.unreadOpacity
         let cueRead = NotchSettings.shared.cueBrightness.readOpacity
         let mode = listeningMode
+        // R80: compute isEffectivelyListening inline using the cached `mode`
+        // local. The previous call (`isListening: isEffectivelyListening`)
+        // routed through a computed property that re-read
+        // `NotchSettings.shared.listeningMode` (a 2nd singleton read after
+        // the cached `mode` above) and then dispatched on it. Inlining the
+        // switch uses the cached `mode` and re-reads only `isPaused` /
+        // `speechRecognizer.isListening` (the genuinely dynamic inputs).
+        // Saves 1 singleton read per render × 20 Hz = 20 reads/sec on this
+        // prompterView; same fix on the other two prompterViews triples it.
+        let effectiveListening: Bool
+        switch mode {
+        case .wordTracking, .silencePaused:
+            effectiveListening = speechRecognizer.isListening
+        case .classic:
+            effectiveListening = !isPaused
+        }
         return VStack(spacing: 0) {
             SpeechScrollView(
                 words: words,
@@ -1026,7 +1042,7 @@ struct NotchOverlayView: View {
                 },
                 smoothScroll: mode != .wordTracking,
                 smoothWordProgress: timerWordProgress,
-                isListening: isEffectivelyListening
+                isListening: effectiveListening
             )
             .padding(.horizontal, 12)
             .padding(.top, 6)
@@ -1545,6 +1561,15 @@ struct FloatingOverlayView: View {
         let cueUnread = NotchSettings.shared.cueBrightness.unreadOpacity
         let cueRead = NotchSettings.shared.cueBrightness.readOpacity
         let mode = listeningMode
+        // R80: inline isEffectivelyListening switch on the cached `mode`
+        // local (see main prompterView comment for rationale).
+        let effectiveListening: Bool
+        switch mode {
+        case .wordTracking, .silencePaused:
+            effectiveListening = speechRecognizer.isListening
+        case .classic:
+            effectiveListening = !isPaused
+        }
         return VStack(spacing: 0) {
             SpeechScrollView(
                 words: words,
@@ -1569,7 +1594,7 @@ struct FloatingOverlayView: View {
                 },
                 smoothScroll: mode != .wordTracking,
                 smoothWordProgress: timerWordProgress,
-                isListening: isEffectivelyListening
+                isListening: effectiveListening
             )
             .padding(.horizontal, 16)
             .padding(.top, 12)
