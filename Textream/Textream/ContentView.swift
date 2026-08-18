@@ -246,10 +246,22 @@ struct ContentView: View {
             let removeEnd = text.index(removeStart, offsetBy: safeLen)
             text.removeSubrange(removeStart..<removeEnd)
 
+            // R118: post-mutation text.count walks the grapheme cluster
+            // sequence (O(N)). For a 50KB script at 5 ASR partials/sec that's
+            // 250K Character walks/sec on top of the insert offset walk below.
+            // Cache the new length via arithmetic (`initialTextCount - safeLen`
+            // matches what Swift's String.count would compute since
+            // removeSubrange only removes `safeLen` Characters and no grapheme
+            // boundaries shift). Same pattern as R19/R31/R90/R97/R116.
+            let postRemoveLen = initialTextCount - safeLen
+
             // Build the new segment content
             let sep = segmentNeedsSeparator ? " " : ""
             let newSegment = sep + effectiveText
-            text.insert(contentsOf: newSegment, at: text.index(text.startIndex, offsetBy: min(segmentStart, text.count)))
+            text.insert(
+                contentsOf: newSegment,
+                at: text.index(text.startIndex, offsetBy: min(segmentStart, postRemoveLen))
+            )
 
             let prevLen = segmentLength
             segmentLength = newSegment.count
