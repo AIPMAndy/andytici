@@ -146,12 +146,12 @@ struct HighlightingTextEditor: NSViewRepresentable {
         }
 
         // Apply bump highlight on newly dictated range
-        if let range = highlightRange, range.location + range.length <= textView.string.count {
+        if let range = highlightRange, range.location + range.length <= (textView.textStorage?.length ?? 0) {
             context.coordinator.applyBumpHighlight(textView, range: range)
         }
 
         // Move caret to requested position (one-shot)
-        if let pos = caretPosition, pos <= textView.string.count {
+        if let pos = caretPosition, pos <= (textView.textStorage?.length ?? 0) {
             let caretRange = NSRange(location: pos, length: 0)
             textView.setSelectedRange(caretRange)
             textView.scrollRangeToVisible(caretRange)
@@ -274,7 +274,7 @@ struct HighlightingTextEditor: NSViewRepresentable {
         private func clearBumpHighlight(_ textView: NSTextView) {
             let range = lastBumpRange
             guard range.length > 0,
-                  range.location + range.length <= textView.string.utf16.count else {
+                  range.location + range.length <= (textView.textStorage?.length ?? 0) else {
                 lastBumpRange = NSRange(location: 0, length: 0)
                 return
             }
