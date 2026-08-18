@@ -106,11 +106,11 @@ class SpeechRecognizer {
     }
     /// Cached UTF-16 length of lastSpokenText. Avoids O(N) walk on every ASR
     /// partial in matchCharacters' prefix-trim calculation.
-    private var lastSpokenTextUtf16Count: Int = 0
+    @ObservationIgnored private var lastSpokenTextUtf16Count: Int = 0
     var lastSpokenTail3: String { _lastSpokenTail3 }
-    private var _lastSpokenTail3: String = ""
+    @ObservationIgnored private var _lastSpokenTail3: String = ""
     var lastSpokenTail5: String { _lastSpokenTail5 }
-    private var _lastSpokenTail5: String = ""
+    @ObservationIgnored private var _lastSpokenTail5: String = ""
     var shouldDismiss: Bool = false
     var shouldAdvancePage: Bool = false
 
@@ -119,11 +119,11 @@ class SpeechRecognizer {
         voiceActivityDetector.isActive(at: ProcessInfo.processInfo.systemUptime)
     }
 
-    private var speechRecognizer: SFSpeechRecognizer?
-    private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
-    private var recognitionTask: SFSpeechRecognitionTask?
-    private var audioEngine = AVAudioEngine()
-    private var sourceText: String = ""
+    @ObservationIgnored private var speechRecognizer: SFSpeechRecognizer?
+    @ObservationIgnored private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    @ObservationIgnored private var recognitionTask: SFSpeechRecognitionTask?
+    @ObservationIgnored private var audioEngine = AVAudioEngine()
+    @ObservationIgnored private var sourceText: String = ""
     /// Cached `sourceText.count` (Character count). Populated whenever
     /// `sourceText` is assigned (R19). `String.count` is an O(N) Unicode
     /// grapheme walk; this cache lets per-ASR-partial sites (`jumpTo`,
@@ -131,67 +131,67 @@ class SpeechRecognizer {
     /// semantically correct bound here because `WordItem.charOffset` is
     /// built in `MarqueeTextView.buildItems` via `offset += word.count + 1`,
     /// which is also grapheme-based.
-    private var sourceTextCharCount: Int = 0
-    private var annotationRanges: [Range<Int>] = []
+    @ObservationIgnored private var sourceTextCharCount: Int = 0
+    @ObservationIgnored private var annotationRanges: [Range<Int>] = []
     /// Monotonic cursor into `annotationRanges` used by advancePastAnnotations.
     /// Reset to 0 whenever annotationRanges is rebuilt. (R26)
-    private var annotationCursor: Int = 0
-    private var voiceActivityDetector = VoiceActivityDetector()
-    private var matchStartOffset: Int = 0  // char offset to start matching from
+    @ObservationIgnored private var annotationCursor: Int = 0
+    @ObservationIgnored private var voiceActivityDetector = VoiceActivityDetector()
+    @ObservationIgnored private var matchStartOffset: Int = 0  // char offset to start matching from
     /// Cached lowercase [Character] view of sourceText, kept in sync with edits.
     /// charLevelMatch reuses this instead of rebuilding on every ASR partial.
-    private var cachedLowercasedSource: [Character] = []
+    @ObservationIgnored private var cachedLowercasedSource: [Character] = []
     /// Position up to which cachedLowercasedSource has been consumed by the
     /// last charLevelMatch call. On the next call we only scan new characters.
-    private var charMatchCursor: Int = 0
+    @ObservationIgnored private var charMatchCursor: Int = 0
     /// Cached word-level [String] view of sourceText, kept in sync with edits.
-    private var cachedSourceWords: [String] = []
+    @ObservationIgnored private var cachedSourceWords: [String] = []
     /// Pre-lowercased, letters/digits-only version of each cachedSourceWords
     /// entry. Avoids per-partial Character.isLetter/isNumber work in the
     /// word-level matcher's lookahead loops.
-    private var cachedSourceWordAlnum: [String] = []
+    @ObservationIgnored private var cachedSourceWordAlnum: [String] = []
     /// Character counts of each cachedSourceWords entry (utf16 length — for
     /// the BMP-heavy scripts STT returns this matches Character count exactly).
     /// Pre-computed so the word-level matcher and isFuzzyMatch can skip the
     /// O(N) grapheme walk that String.count performs on every access.
-    private var cachedSourceWordCharCount: [Int] = []
+    @ObservationIgnored private var cachedSourceWordCharCount: [Int] = []
     /// utf16 count of each cachedSourceWordAlnum entry — used by isFuzzyMatch
     /// to short-circuit equal-length comparisons without re-walking the String.
-    private var cachedSourceWordAlnumUtf16Count: [Int] = []
+    @ObservationIgnored private var cachedSourceWordAlnumUtf16Count: [Int] = []
     /// utf16 code units for each cachedSourceWordAlnum entry. Pre-materialized
     /// so the inner editDistance / isFuzzyMatch loop doesn't allocate a fresh
     /// `[UInt16]` for the source side on every mismatch (R36 was the UInt16
     /// conversion itself; R54 moves the source-side materialization off the
     /// hot path by computing it once in rebuildMatchCache).
-    private var cachedSourceWordAlnumUtf16: [[UInt16]] = []
+    @ObservationIgnored private var cachedSourceWordAlnumUtf16: [[UInt16]] = []
     /// Char-offset table aligned with cachedSourceWords (each entry is the
     /// starting char offset of that word in sourceText). Pre-computed once.
-    private var cachedWordOffsets: [Int] = []
+    @ObservationIgnored private var cachedWordOffsets: [Int] = []
     /// Per-word annotation flag (true = word is inside a `[...]` block or is
     /// punctuation-only and should be skipped by wordLevelMatch). Pre-computed
     /// in rebuildMatchCache so the inner loop can do an O(1) array lookup
     /// instead of running `(si..<sourceCount).contains(where:)` and
     /// `Self.isAnnotationWord` (which allocates a temporary String via
     /// `word.filter`) on every iteration. (R21)
-    private var cachedSourceWordIsAnnotation: [Bool] = []
+    @ObservationIgnored private var cachedSourceWordIsAnnotation: [Bool] = []
     /// Per-char annotation flag (true = char is inside any `[...]` block).
     /// Pre-computed so charLevelMatch can do an O(1) array lookup instead of
     /// `src[si...].firstIndex(of: "]")` (O(N) scan + ArraySlice allocation)
     /// each time it encounters a `[`. (R21)
-    private var cachedCharIsInAnnotation: [Bool] = []
-    private var retryCount: Int = 0
-    private let maxRetries: Int = 10
-    private var configurationChangeObserver: Any?
-    private var pendingRestart: DispatchWorkItem?
-    private var sessionGeneration: Int = 0
-    private var recognitionGeneration: Int = 0
-    private var shouldListen: Bool = false
-    private var suppressConfigChange: Bool = false
-    private var requestLock = NSLock()
-    private var preemptiveRestartTimer: Timer?
+    @ObservationIgnored private var cachedCharIsInAnnotation: [Bool] = []
+    @ObservationIgnored private var retryCount: Int = 0
+    @ObservationIgnored private let maxRetries: Int = 10
+    @ObservationIgnored private var configurationChangeObserver: Any?
+    @ObservationIgnored private var pendingRestart: DispatchWorkItem?
+    @ObservationIgnored private var sessionGeneration: Int = 0
+    @ObservationIgnored private var recognitionGeneration: Int = 0
+    @ObservationIgnored private var shouldListen: Bool = false
+    @ObservationIgnored private var suppressConfigChange: Bool = false
+    @ObservationIgnored private var requestLock = NSLock()
+    @ObservationIgnored private var preemptiveRestartTimer: Timer?
     /// Sliding window of recent match positions for confidence gating.
     /// We require 2-of-3 recent results to agree before committing a forward jump.
-    private var recentMatchPositions: [Int] = []
+    @ObservationIgnored private var recentMatchPositions: [Int] = []
     /// Transcript prefix to ignore when matching — set on jumps so the task
     /// can keep running instead of being restarted (a restart loses the words
     /// the user re-speaks right after the jump). Stored as the prefix string,
@@ -199,16 +199,16 @@ class SpeechRecognizer {
     /// the surviving common prefix avoids swallowing post-jump speech when
     /// the pre-jump portion changes length. Cleared whenever a new
     /// recognition task starts a fresh transcript.
-    private var spokenAnchorPrefix: String = "" {
+    @ObservationIgnored private var spokenAnchorPrefix: String = "" {
         didSet { spokenAnchorPrefixUtf16Count = spokenAnchorPrefix.utf16.count }
     }
     /// Cached UTF-16 length of spokenAnchorPrefix. Avoids O(N) walk in
     /// matchCharacters when computing the trim length after a manual jump.
-    private var spokenAnchorPrefixUtf16Count: Int = 0
+    @ObservationIgnored private var spokenAnchorPrefixUtf16Count: Int = 0
     /// Results computed before a jump can be delivered after it; matching
     /// ignores results for a short window so pre-jump speech isn't matched
     /// against the text at the new offset.
-    private var lastJumpAt: Date = .distantPast
+    @ObservationIgnored private var lastJumpAt: Date = .distantPast
     /// R62: STT recognizers frequently re-emit the latest partial verbatim.
     /// When fullSpoken, matchStartOffset and spokenAnchorPrefix are unchanged
     /// from the previous matchCharacters call, charLevelMatch and wordLevelMatch
@@ -216,11 +216,11 @@ class SpeechRecognizer {
     /// Cache invalidates automatically when any of the three keys differ
     /// (jumpTo / updateText / start / resume / restart all reset matchStartOffset
     /// and/or spokenAnchorPrefix).
-    private var prevMatchedFullSpoken: String = ""
-    private var prevMatchedStartOffset: Int = -1
-    private var prevMatchedAnchorPrefix: String = ""
-    private var prevMatchedCharResult: Int = 0
-    private var prevMatchedWordResult: Int = 0
+    @ObservationIgnored private var prevMatchedFullSpoken: String = ""
+    @ObservationIgnored private var prevMatchedStartOffset: Int = -1
+    @ObservationIgnored private var prevMatchedAnchorPrefix: String = ""
+    @ObservationIgnored private var prevMatchedCharResult: Int = 0
+    @ObservationIgnored private var prevMatchedWordResult: Int = 0
 
     /// Update the source text while preserving the current recognized char count.
     /// Used by Director Mode to live-edit unread text without resetting read progress.
