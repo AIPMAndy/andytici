@@ -939,6 +939,14 @@ class SpeechRecognizer {
         // don't match pre-jump speech against the text at the new offset.
         guard Date().timeIntervalSince(lastJumpAt) > 0.3 else { return }
 
+        // R97: cache fullSpoken.utf16.count once. The matchCharacters body
+        // reads it twice (lines 964 + 981 below) on every ASR partial at
+        // 5-20 Hz — utf16.count is O(1) for ASCII/BMP but each call still
+        // does a property dispatch + length read on the String's UTF16View.
+        // For STT plain text the value is invariant within this call, so
+        // one local covers both sites with identical semantics.
+        let fullSpokenUtf16Count = fullSpoken.utf16.count
+
         // Ignore transcript from before the most recent jump. Trim by the
         // common prefix that survived the recognizer's revisions, but never
         // less than the anchor length minus a small slack — a revision very
@@ -961,7 +969,7 @@ class SpeechRecognizer {
             // unit comparison is correct and ~10× cheaper per char. (R28)
             let aU16 = spokenAnchorPrefix.utf16
             let bU16 = fullSpoken.utf16
-            let limit = min(spokenAnchorPrefixUtf16Count, fullSpoken.utf16.count)
+            let limit = min(spokenAnchorPrefixUtf16Count, fullSpokenUtf16Count)
             var ai = aU16.startIndex
             var bi = bU16.startIndex
             var common = 0
@@ -978,7 +986,7 @@ class SpeechRecognizer {
             let trimLen = min(lastSpokenTextUtf16Count, max(common, spokenAnchorPrefixUtf16Count - 24))
             // dropFirst traps if trimLen > fullSpoken.utf16.count; guard
             // with the cheap utf16 count (O(1), no grapheme walk).
-            if trimLen >= fullSpoken.utf16.count { return }
+            if trimLen >= fullSpokenUtf16Count { return }
             spoken = fullSpoken.dropFirst(trimLen)
         } else {
             spoken = Substring(fullSpoken)
