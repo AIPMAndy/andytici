@@ -97,28 +97,23 @@ class ExternalDisplayController {
         // duplicate registrations (each previous registration would still
         // fire, racing the latest one on the same flag flip).
         dismissObserver = nil
+        // R110: wrap the non-Sendable SpeechRecognizer so the @Sendable
+        // onChange closure can carry it across the Sendable boundary.
+        let ref = UnsafeSendableRef(speechRecognizer)
         withObservationTracking {
             // Touch the property inside the apply closure so the runtime
             // registers a dependency on this key path. Reading it here is
             // the only thing that matters — the returned value is unused.
             _ = speechRecognizer.shouldDismiss
-        } onChange: { [speechRecognizer] in
-            // The onChange closure is @Sendable, so it can only carry
-            // Sendable values out. Collapse the decision to a single Bool
-            // (Sendable) and hand the rest of the work — including the
-            // non-Sendable self/speechRecognizer captures the re-arm
-            // path needs — to a regular main-queue block. The outer
-            // capture of `speechRecognizer` is required so we can re-arm
-            // on the reset path below; Swift lifts the reference through
-            // the @Sendable boundary because DispatchQueue.main.async's
-            // block parameter is not @Sendable (only the queue *hop* is).
-            let didDismiss = speechRecognizer.shouldDismiss
-            DispatchQueue.main.async { [weak self, speechRecognizer] in
+        } onChange: { [ref] in
+            // Snapshot the flag to a Sendable local before hopping to main.
+            let didDismiss = ref.value.shouldDismiss
+            DispatchQueue.main.async { [weak self, ref] in
                 guard let self else { return }
                 guard didDismiss else {
                     // Reset path (shouldDismiss flipped false): no action,
                     // but re-arm so the next flip is captured.
-                    self.observeShouldDismiss(speechRecognizer: speechRecognizer)
+                    self.observeShouldDismiss(speechRecognizer: ref.value)
                     return
                 }
                 self.dismissObserver = nil

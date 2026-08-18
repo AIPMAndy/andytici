@@ -595,24 +595,24 @@ class NotchOverlayController: NSObject {
     /// the final dismiss fire (session is over). (R108)
     private func observeSpeechFlags() {
         speechObserver = nil
+        // R110: wrap the non-Sendable SpeechRecognizer so the @Sendable
+        // onChange closure can carry it across the Sendable boundary.
+        let ref = UnsafeSendableRef(speechRecognizer)
         withObservationTracking {
             // Touch both properties inside the apply closure so the runtime
             // registers a dependency on each key path. The returned value is
             // unused — only the read matters.
             _ = speechRecognizer.shouldAdvancePage
             _ = speechRecognizer.shouldDismiss
-        } onChange: { [speechRecognizer] in
-            // onChange closure is @Sendable: only Sendable values out.
-            // Snapshot the two Bools to locals and hand the work — including
-            // the non-Sendable self + speechRecognizer captures the
-            // re-arm path needs — to a regular main-queue block.
-            let didAdvance = speechRecognizer.shouldAdvancePage
-            let didDismiss = speechRecognizer.shouldDismiss
-            DispatchQueue.main.async { [weak self, speechRecognizer] in
+        } onChange: { [ref] in
+            // Snapshot the two Bools to Sendable locals before hopping to main.
+            let didAdvance = ref.value.shouldAdvancePage
+            let didDismiss = ref.value.shouldDismiss
+            DispatchQueue.main.async { [weak self, ref] in
                 guard let self else { return }
                 // Page-advance handler (mirrors the polling branch above).
                 if didAdvance {
-                    speechRecognizer.shouldAdvancePage = false
+                    ref.value.shouldAdvancePage = false
                     self.onNextPage?()
                 }
                 // Dismiss handler. Mirrors the polling branch but only
@@ -622,7 +622,7 @@ class NotchOverlayController: NSObject {
                 // one of the two flags changes, so we use the snapshot).
                 if didDismiss, !self.isDismissing {
                     self.isDismissing = true
-                    DispatchQueue.main.asyncAfter(deadline: .now() + dismissTeardownDelay) { [weak self] in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + dismissTeardownDelay) { [weak self, ref] in
                         guard let self else { return }
                         self.stopMouseTracking()
                         self.stopCursorTracking()
@@ -632,7 +632,7 @@ class NotchOverlayController: NSObject {
                         self.panel?.orderOut(nil)
                         self.panel = nil
                         self.frameTracker = nil
-                        speechRecognizer.shouldDismiss = false
+                        ref.value.shouldDismiss = false
                         self.onComplete?()
                     }
                     // Session is over: drop all listeners so the next
@@ -652,16 +652,18 @@ class NotchOverlayController: NSObject {
     /// Always re-arms because page jumps never tear down the session. (R108)
     private func observeJumpFlag() {
         jumpObserver = nil
+        // R110: wrap the non-Sendable OverlayContent so the @Sendable
+        // onChange closure can carry it across the Sendable boundary.
+        let ref = UnsafeSendableRef(overlayContent)
         withObservationTracking {
             _ = overlayContent.jumpToPageIndex
-        } onChange: { [overlayContent] in
-            // @Sendable: snapshot the optional Int to a local. Reading the
-            // overlayContent property is fine because Int is Sendable.
-            let targetIndex = overlayContent.jumpToPageIndex
-            DispatchQueue.main.async { [weak self, overlayContent] in
+        } onChange: { [ref] in
+            // Snapshot the optional Int to a Sendable local.
+            let targetIndex = ref.value.jumpToPageIndex
+            DispatchQueue.main.async { [weak self, ref] in
                 guard let self else { return }
                 if let targetIndex {
-                    overlayContent.jumpToPageIndex = nil
+                    ref.value.jumpToPageIndex = nil
                     TextreamService.shared.jumpToPage(index: targetIndex)
                 }
                 // Always re-arm — page jumps don't end the session.
