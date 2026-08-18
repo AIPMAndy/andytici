@@ -28,6 +28,22 @@ class NotchFrameTracker {
         let y = screenMaxY - visibleHeight
         panel.setFrame(NSRect(x: x, y: y, width: visibleWidth, height: visibleHeight), display: false)
     }
+
+    // R94: batched frame write. The per-property didSets above each call
+    // updatePanel() independently, so writing both `visibleHeight` and
+    // `visibleWidth` in sequence issues 2 WindowServer setFrame IPCs and
+    // produces an intermediate (newHeight, oldWidth) frame that the
+    // WindowServer never displays — pure waste. Callers that update both
+    // axes at once (showPinned init, updateFrameTracker on every drag tick
+    // 30-60 Hz) should use this entry point so we issue exactly one IPC
+    // with the final combined state. The individual didSets stay so single-
+    // property writers from any future caller still trigger a redraw.
+    func applyFrame(height: CGFloat, width: CGFloat) {
+        var changed = false
+        if visibleHeight != height { visibleHeight = height; changed = true }
+        if visibleWidth != width { visibleWidth = width; changed = true }
+        if changed { updatePanel() }
+    }
 }
 
 @Observable
@@ -323,9 +339,13 @@ class NotchOverlayController: NSObject {
         tracker.screenMidX = screenFrame.midX
         tracker.screenMaxY = screenFrame.maxY
         tracker.menuBarHeight = menuBarHeight
-        // Set full expanded dimensions so mouse tracking uses the correct size
-        tracker.visibleWidth = notchWidth
-        tracker.visibleHeight = menuBarHeight + textAreaHeight
+        // Set full expanded dimensions so mouse tracking uses the correct size.
+        // R94: batched single IPC instead of two (visibleHeight then visibleWidth
+        // didSets would each call updatePanel independently).
+        tracker.applyFrame(
+            height: menuBarHeight + textAreaHeight,
+            width: notchWidth
+        )
         self.frameTracker = tracker
         self.currentScreenID = screen.displayID
 
@@ -999,8 +1019,9 @@ struct NotchOverlayView: View {
     private func updateFrameTracker() {
         let targetHeight = menuBarHeight + baseTextHeight + extraHeight
         let fullWidth = NotchSettings.shared.notchWidth
-        frameTracker.visibleHeight = targetHeight
-        frameTracker.visibleWidth = fullWidth
+        // R94: single IPC instead of two via per-property didSets. Drag tick
+        // 30-60 Hz → halves WindowServer setFrame roundtrips per tick.
+        frameTracker.applyFrame(height: targetHeight, width: fullWidth)
     }
 
     private var isEffectivelyListening: Bool {
