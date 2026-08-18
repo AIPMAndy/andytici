@@ -248,6 +248,13 @@ struct SpeechScrollView: View {
     @State private var wordYPositions: [CGFloat?] = []
     @State private var containerHeight: CGFloat = 0
     @State private var isUserScrolling: Bool = false
+    // R122: cached max of wordYPositions. Built incrementally in
+    // onPreferenceChange (only scans the new positions, not the full array)
+    // and reset in .onChange(of: words). Replaces the O(N) scan in
+    // currentMaxY() that ran on every scroll event (60+ Hz on a trackpad
+    // × 1000-word script = 60,000 walks/sec). Scroll handlers now read
+    // cachedMaxY in O(1).
+    @State private var cachedMaxY: CGFloat = 0
     // R48: derived from highlightedCharCount but updated only when ASR
     // actually crosses a word boundary. Drives WordFlowLayout's per-word
     // visual state (isNextWord / isFullyLit). Same-word ASR ticks no
@@ -287,11 +294,12 @@ struct SpeechScrollView: View {
                 // (~60 Hz during scroll, ~16 KB of optional writes for a
                 // 1000-word script), reuse the existing buffer and only
                 // write the slots that arrived. Stale entries for off-screen
-                // words are harmless: `currentMaxY()` only walks slots, and
-                // an overestimate of maxY only widens the scroll bound, never
-                // corrupting the centered-word lookup. On `words` array
-                // change the `onChange(of: words)` handler clears the buffer
-                // back to [] — see line ~332.
+                // words are harmless: `cachedMaxY` only grows (we never shrink
+                // it on a layout flush without new highs), so an overestimate
+                // of maxY only widens the scroll bound, never corrupting
+                // the centered-word lookup. On `words` array change the
+                // `onChange(of: words)` handler clears the buffer back to []
+                // and resets cachedMaxY to 0 — see line ~374.
                 var arr = wordYPositions
                 let target = words.count
                 if arr.count < target {
@@ -299,10 +307,22 @@ struct SpeechScrollView: View {
                 } else if arr.count > target {
                     arr.removeLast(arr.count - target)
                 }
+                // R122: track the highest Y seen in this layout flush and
+                // bump cachedMaxY only if it exceeds the current cache.
+                // New positions are typically the visible lines (a small
+                // fraction of `words.count`), so this is O(M) where M is the
+                // positions count, not O(N). On a 1000-word script with
+                // ~30 visible words, this is 30× cheaper than the previous
+                // full-array walk per scroll event.
+                var newMaxY: CGFloat = cachedMaxY
                 for (id, y) in positions where id >= 0 && id < target {
                     arr[id] = y
+                    if y > newMaxY { newMaxY = y }
                 }
                 wordYPositions = arr
+                if newMaxY > cachedMaxY {
+                    cachedMaxY = newMaxY
+                }
                 // After a page switch, wordYPositions was cleared — recenter once new positions arrive
                 if wasEmpty && !arr.isEmpty {
                     recalcCenter(containerHeight: containerHeight)
@@ -363,6 +383,10 @@ struct SpeechScrollView: View {
                 scrollOffset = containerHeight * 0.5 - lineHeight * 0.5
                 manualOffset = 0
                 wordYPositions = []
+                // R122: cachedMaxY was computed against the old `words` —
+                // invalidating it here keeps the bound tight for the new array
+                // (the next onPreferenceChange flush rebuilds it).
+                cachedMaxY = 0
                 // R48: words array changed — reset nextIdx so the next render
                 // recomputes against the fresh items cache. buildItems()
                 // already invalidated WordFlowLayout._memoizedNextIdx.
@@ -390,7 +414,7 @@ struct SpeechScrollView: View {
                             onManualScroll?(true, 0)
                         }
 
-                        let maxY = currentMaxY()
+                        let maxY = cachedMaxY
                         let containerHeight = geo.size.height
                         let maxUp = containerHeight * 0.5
                         let maxDown = max(0, maxY - containerHeight * 0.5)
@@ -421,7 +445,7 @@ struct SpeechScrollView: View {
                             // the position the user picked.
                             onManualScroll?(false, newProgress)
                         } else {
-                            let maxY = currentMaxY()
+                            let maxY = cachedMaxY
                             let containerHeight = geo.size.height
                             let upperBound = containerHeight * 0.5
                             let lowerBound = -max(0, maxY - containerHeight * 0.5)
@@ -484,20 +508,6 @@ struct SpeechScrollView: View {
                 }
             }
         }
-    }
-
-    /// Returns the largest populated Y value in `wordYPositions`, or 0 if the
-    /// array is empty/all-nil. Replaces the previous
-    /// `wordYPositions.values.max()` calls in the scroll handlers, which on a
-    /// Dictionary allocated a lazy `Dictionary.Values` view and then iterated
-    /// the hash buckets. This is a single linear scan over the dense array,
-    /// no intermediate view, no hash table traversal. (R20)
-    private func currentMaxY() -> CGFloat {
-        var maxY: CGFloat = 0
-        for v in wordYPositions {
-            if let v, v > maxY { maxY = v }
-        }
-        return maxY
     }
 
     /// Find the word progress at the current visual position (scrollOffset + manualOffset)
