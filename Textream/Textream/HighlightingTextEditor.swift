@@ -94,7 +94,16 @@ struct HighlightingTextEditor: NSViewRepresentable {
         // Swift are ~2^-64 per pair, so we accept unhandled collisions
         // rather than pay an O(N) verify per call.
         if text.hashValue != context.coordinator.lastSyncedTextHash {
-            if textView.string != text {
+            // R120: skip textView writes while IME is composing. Overwriting
+            // textView.string during an active Chinese / Japanese / Korean IME
+            // composition destroys NSTextInputClient marked-text state, so
+            // the next keystroke lands at the wrong position or is dropped.
+            // The binding follows textView.string via textDidChange, so simply
+            // deferring the write until composition ends is sufficient — IME
+            // state is preserved verbatim and the post-commit binding flush
+            // will pick up the final text naturally.
+            let isComposing = textView.hasMarkedText()
+            if !isComposing && textView.string != text {
                 let selectedRanges = textView.selectedRanges
                 let prevText = context.coordinator.lastAppliedText
                 let prevLen = context.coordinator.lastAppliedTextLength
@@ -158,13 +167,6 @@ struct HighlightingTextEditor: NSViewRepresentable {
             }
             context.coordinator.lastAppliedText = text
                 context.coordinator.lastAppliedTextLength = newLen
-                // R104: cache the hash of the text we just resynced to.
-                // The outer `if text.hashValue != ...` guard reads this on
-                // the next updateNSView call; without updating it here, every
-                // future caret-move / highlightRange / onUserEdit call would
-                // re-enter the outer guard and pay the O(N) verify on
-                // `textView.string != text`.
-                context.coordinator.lastSyncedTextHash = text.hashValue
                 // R88: hoist `updateWritingDirection` inside the text-changed
                 // guard. The previous code called it unconditionally after the
                 // `if textView.string != text { ... }` block. `textBaseDirection`
@@ -180,6 +182,17 @@ struct HighlightingTextEditor: NSViewRepresentable {
                 // the only path that legitimately needed it here was the
                 // text-changed branch itself.
                 updateWritingDirection(textView, text: text)
+            }
+            // R120: only mark the hash as synced when the binding actually
+            // reflects the textView's committed state. During composition the
+            // binding carries the marked-text snapshot, not the final text, so
+            // caching its hash would falsely short-circuit the post-composition
+            // sync. Outside composition we always update — even when we skipped
+            // the inner block because textView.string == text — so the next
+            // updateNSView call fast-exits on the outer hash guard instead of
+            // re-paying the O(N) string compare on every caret move.
+            if !isComposing {
+                context.coordinator.lastSyncedTextHash = text.hashValue
             }
         }
 
