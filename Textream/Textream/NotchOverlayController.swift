@@ -68,6 +68,13 @@ class OverlayContent {
 class NotchOverlayController: NSObject {
     private let cursorOffset: CGFloat = 8
     private let screenEdgeMargin: CGFloat = 5
+    // R85: longest overlay dismiss animation span. NotchOverlayView exit runs
+    // 0.15s content fade + 0.1s wait + 0.3s shrink (phase 2 ends at 0.4s).
+    // The teardown timer must fire AFTER the visual animation completes,
+    // otherwise orderOut(nil) freezes SwiftUI mid-frame and the panel pops
+    // out instead of shrinking smoothly. 0.6s gives a 200 ms buffer past
+    // the last animation tick.
+    private let dismissTeardownDelay: TimeInterval = 0.6
     private var panel: NSPanel?
     let speechRecognizer = SpeechRecognizer()
     let overlayContent = OverlayContent()
@@ -455,7 +462,7 @@ class NotchOverlayController: NSObject {
         speechRecognizer.forceStop()
 
         // Wait for animation, then remove panel
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + dismissTeardownDelay) { [weak self] in
             guard let self else { return }
             self.stopMouseTracking()
             self.stopCursorTracking()
@@ -524,7 +531,7 @@ class NotchOverlayController: NSObject {
                 // Check for dismiss
                 if self.speechRecognizer.shouldDismiss, !self.isDismissing {
                     self.isDismissing = true
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + dismissTeardownDelay) { [weak self] in
                         guard let self else { return }
                         self.stopMouseTracking()
                         self.stopCursorTracking()
