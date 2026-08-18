@@ -165,7 +165,14 @@ struct ExternalDisplayView: View {
     // Timer-based scroll for classic & silence-paused modes
     @State private var timerWordProgress: Double = 0
     @State private var isUserScrolling: Bool = false
-    private let scrollTimer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
+    // R111: throttled from 20Hz → 10Hz to match R50 (NotchOverlayController
+    // was throttled in the same way). 50 ms is overkill for scroll-position
+    // updates — eye perceives ≥24Hz as smooth, and for text scrolling the
+    // user is scanning words, not pixel-tracking motion. Halves body
+    // re-renders for the external display in classic / silencePaused modes.
+    // The matching `speed * 0.05` → `speed * 0.1` change below keeps the
+    // physical scroll rate identical (speed words per second is unchanged).
+    private let scrollTimer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
     // Cached word index (see WordIndexTable in MarqueeTextView.swift).
     @State private var wordIndex: WordIndexTable = WordIndexTable(words: [])
@@ -300,12 +307,14 @@ struct ExternalDisplayView: View {
             // R73: use the body-captured `speed` (read once per body
             // render) instead of `NotchSettings.shared.scrollSpeed` here.
             // Saves 20 singleton reads/sec (one per 20 Hz tick).
+            // R111: 0.05 → 0.1 to compensate for the doubled scrollTimer
+            // interval. Net physical scroll rate (words/sec) is identical.
             switch mode {
             case .classic:
-                timerWordProgress += speed * 0.05
+                timerWordProgress += speed * 0.1
             case .silencePaused:
                 guard speechRecognizer.isListening, speechRecognizer.isSpeaking else { return }
-                timerWordProgress += speed * 0.05
+                timerWordProgress += speed * 0.1
             case .wordTracking:
                 break
             }
