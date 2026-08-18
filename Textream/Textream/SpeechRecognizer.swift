@@ -10,6 +10,7 @@ import Foundation
 import Speech
 import AVFoundation
 import CoreAudio
+import os
 
 struct AudioInputDevice: Identifiable, Hashable {
     let id: AudioDeviceID
@@ -192,7 +193,9 @@ class SpeechRecognizer {
     @ObservationIgnored private var recognitionGeneration: Int = 0
     @ObservationIgnored private var shouldListen: Bool = false
     @ObservationIgnored private var suppressConfigChange: Bool = false
-    @ObservationIgnored private var requestLock = NSLock()
+    // R109: os_unfair_lock is lighter than NSLock (which wraps pthread_mutex).
+    // Same lock()/unlock() API; 47Hz audio hot path saves ~10s of ns per tick.
+    @ObservationIgnored private var requestLock = OSAllocatedUnfairLock<Void>(initialState: ())
     @ObservationIgnored private var preemptiveRestartTimer: Timer?
     /// Sliding window of recent match positions for confidence gating.
     /// We require 2-of-3 recent results to agree before committing a forward jump.

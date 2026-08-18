@@ -9,6 +9,7 @@ import Foundation
 import Speech
 import AVFoundation
 import AppKit
+import os
 
 @Observable
 class DictationManager {
@@ -29,7 +30,9 @@ class DictationManager {
     private var configurationChangeObserver: Any?
     private var suppressConfigChange: Bool = false
     private var pendingRestart: DispatchWorkItem?
-    private var requestLock = NSLock()
+    // R109: os_unfair_lock is lighter than NSLock (which wraps pthread_mutex).
+    // Same lock()/unlock() API; 47Hz audio hot path saves ~10s of ns per tick.
+    private var requestLock = OSAllocatedUnfairLock<Void>(initialState: ())
     private var recognitionGeneration: Int = 0
     private var shouldRecord: Bool = false
     private var retryCount: Int = 0
