@@ -69,6 +69,13 @@ class DirectorServer {
     // Cached JSONEncoder: 10Hz broadcast loop was allocating a fresh encoder
     // each tick. Reuse one instance. (R33)
     private let jsonEncoder = JSONEncoder()
+    // R91: mirror of R33 for the incoming WebSocket message parser.
+    // `handleIncomingMessage` previously did `JSONDecoder().decode(...)` on
+    // every WS frame — auth + setText + N×updateText + stop. Each
+    // JSONDecoder init allocates internal strategy / date-formatter /
+    // key-strategy state identical to the encoder waste R33 fixed. Share
+    // one decoder across the connection lifetime.
+    private let jsonDecoder = JSONDecoder()
     // R40: pre-encode cheap signature — same pattern as BrowserServer.
     // Skips the encoder entirely on idle ticks when no user-visible field
     // changed since the last tick.
@@ -254,7 +261,7 @@ class DirectorServer {
     }
 
     private func handleIncomingMessage(_ data: Data, from conn: NWConnection) {
-        guard let command = try? JSONDecoder().decode(DirectorCommand.self, from: data) else { return }
+        guard let command = try? jsonDecoder.decode(DirectorCommand.self, from: data) else { return }
         let connId = ObjectIdentifier(conn)
 
         DispatchQueue.main.async { [weak self] in
