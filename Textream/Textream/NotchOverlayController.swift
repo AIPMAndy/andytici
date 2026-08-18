@@ -1066,12 +1066,21 @@ struct NotchOverlayView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .help(error)
                 } else if mode == .wordTracking {
-                    Text(speechRecognizer.lastSpokenTail3)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.5))
-                        .lineLimit(1)
-                        .truncationMode(.head)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    // R83: use LastSpokenTailText wrapper instead of reading
+                    // `speechRecognizer.lastSpokenTail3` directly. The
+                    // wrapper's body reads only that property, so changes
+                    // to lastSpokenTail3 (≈5 Hz on every ASR partial /
+                    // final) re-render only the small Text — not the
+                    // whole toolbar HStack. The toolbar currently reads
+                    // audioLevels (43 Hz), isListening, isStarting,
+                    // error, pageCount, etc., so the 5 Hz ASR tail churn
+                    // was forcing the entire toolbar to rebuild 5 times
+                    // /sec just to redraw three characters. With the
+                    // wrapper, ASR tail updates don't add any toolbar
+                    // re-renders — the parent only fires on the
+                    // genuinely dynamic toolbar properties. Same fix
+                    // applied to floatingPrompterView below.
+                    LastSpokenTailText(recognizer: speechRecognizer, tailSize: 3, fontSize: 11)
                 } else {
                     Spacer(minLength: 0)
                 }
@@ -1615,12 +1624,12 @@ struct FloatingOverlayView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .help(error)
                 } else if mode == .wordTracking {
-                    Text(speechRecognizer.lastSpokenTail3)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.5))
-                        .lineLimit(1)
-                        .truncationMode(.head)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    // R83: companion fix to the floatingPrompterView
+                    // toolbar. Same rationale as the prompterView call
+                    // site above — replace the direct lastSpokenTail3
+                    // read with the wrapper struct so ASR tail updates
+                    // don't force the whole toolbar to re-render.
+                    LastSpokenTailText(recognizer: speechRecognizer, tailSize: 3, fontSize: 11)
                 } else {
                     Spacer()
                 }
