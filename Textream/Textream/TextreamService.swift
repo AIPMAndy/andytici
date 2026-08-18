@@ -20,7 +20,20 @@ class TextreamService: NSObject, ObservableObject {
     var launchedExternally = false
     @Published var directorIsReading = false
 
-    @Published var pages: [String] = [""]
+    // R115: cached answer to "does any page have non-whitespace content?".
+    // O(Pages × trim) on every ContentView body re-render was wasteful —
+    // pages only change on actual edits / add / remove / import, so the
+    // recompute belongs at the mutation site, not the render site. The view
+    // still subscribes to `pages` via currentText.get, so reactivity is
+    // preserved when didSet fires. Initial value `false` matches pages = [""].
+    private(set) var hasAnyContent: Bool = false
+
+    @Published var pages: [String] = [""] {
+        didSet {
+            hasAnyContent = !pages.isEmpty
+                && pages.contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        }
+    }
     @Published var currentPageIndex: Int = 0
     @Published var readPages: Set<Int> = []
 

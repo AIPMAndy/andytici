@@ -55,7 +55,7 @@ struct ContentView: View {
     }
 
     private var hasAnyContent: Bool {
-        service.pages.contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        service.hasAnyContent
     }
 
     private var isRecording: Bool {
