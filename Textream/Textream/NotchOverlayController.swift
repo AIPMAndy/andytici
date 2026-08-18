@@ -223,31 +223,6 @@ class NotchOverlayController: NSObject {
         }
     }
 
-    func updateContent(text: String, hasNextPage: Bool) {
-        let normalized = splitTextIntoWords(text)
-
-        // Fully reset speech state for new page
-        speechRecognizer.recognizedCharCount = 0
-        speechRecognizer.shouldDismiss = false
-        speechRecognizer.shouldAdvancePage = false
-        speechRecognizer.lastSpokenText = ""
-
-        // R100: route through setWords so the single entry point owns the
-        // words/totalCharCount assignment. The previous direct write of
-        // `overlayContent.wordCharOffsets` here was a second-source-of-truth
-        // bug — OverlayContent.setWords is now the canonical mutator.
-        // R101: use the canonical Int reduce formula (drops the temp String
-        // allocation that `joined(separator: " ").count` incurred) and fold
-        // hasNextPage into setWords so all three props share one write site.
-        let resolvedTotal = Self.totalCharCount(forWords: normalized)
-        overlayContent.setWords(normalized, totalCharCount: resolvedTotal, hasNextPage: hasNextPage)
-
-        let settings = NotchSettings.shared
-        if settings.listeningMode != .classic {
-            speechRecognizer.start(with: text)
-        }
-    }
-
     private func screenUnderMouse() -> NSScreen? {
         screenUnderMouse(mouseLocation: NSEvent.mouseLocation)
     }
@@ -1032,15 +1007,6 @@ struct NotchOverlayView: View {
         frameTracker.applyFrame(height: targetHeight, width: fullWidth)
     }
 
-    private var isEffectivelyListening: Bool {
-        switch listeningMode {
-        case .wordTracking, .silencePaused:
-            return speechRecognizer.isListening
-        case .classic:
-            return !isPaused
-        }
-    }
-
     private var prompterView: some View {
         // R76: cache effectiveCharCount + listeningMode + 5 NotchSettings
         // reads at the top of this computed property. Previous body read
@@ -1503,15 +1469,6 @@ struct FloatingOverlayView: View {
 
     var isDone: Bool {
         totalCharCount > 0 && effectiveCharCount >= totalCharCount
-    }
-
-    private var isEffectivelyListening: Bool {
-        switch listeningMode {
-        case .wordTracking, .silencePaused:
-            return speechRecognizer.isListening
-        case .classic:
-            return !isPaused
-        }
     }
 
     var body: some View {

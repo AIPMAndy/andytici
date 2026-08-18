@@ -159,15 +159,6 @@ struct ExternalDisplayView: View {
         totalCharCount > 0 && effectiveCharCount >= totalCharCount
     }
 
-    private var isEffectivelyListening: Bool {
-        switch listeningMode {
-        case .wordTracking, .silencePaused:
-            return speechRecognizer.isListening
-        case .classic:
-            return true
-        }
-    }
-
     var body: some View {
         // R68: cache `effectiveCharCount` and `isDone` once per body render.
         // The previous body read `isDone` three times (the `if` branch, the

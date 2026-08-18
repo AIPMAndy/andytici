@@ -164,6 +164,11 @@ class SpeechRecognizer {
     /// conversion itself; R54 moves the source-side materialization off the
     /// hot path by computing it once in rebuildMatchCache).
     @ObservationIgnored private var cachedSourceWordAlnumUtf16: [[UInt16]] = []
+    /// Scratch DP row reused by editDistance across calls. Grow-only: the
+    /// first editDistance allocates; subsequent calls reset the used prefix
+    /// in place. Eliminates the per-call `Array(0...iCount)` allocation
+    /// (~12 editDistance calls per ASR partial, each previously allocating).
+    @ObservationIgnored private var editDistanceDPBuffer: [Int] = []
     /// Char-offset table aligned with cachedSourceWords (each entry is the
     /// starting char offset of that word in sourceText). Pre-computed once.
     @ObservationIgnored private var cachedWordOffsets: [Int] = []
@@ -1379,8 +1384,13 @@ class SpeechRecognizer {
         // - non-alnum dropped per char. (R23)
         var spokenAlnumWords: [String] = []
         var spokenAlnumUtf16Counts: [Int] = []
+        // R102: parallel [UInt16] table to feed isFuzzyMatchCachedSrc without
+        // a per-call `Array(b.utf16)` materialization. Built once per partial,
+        // looked up by index at each skip step (≤12 lookups per partial).
+        var spokenAlnumUtf16: [[UInt16]] = []
         spokenAlnumWords.reserveCapacity(32)
         spokenAlnumUtf16Counts.reserveCapacity(32)
+        spokenAlnumUtf16.reserveCapacity(32)
         var wordBuf = ""
         wordBuf.reserveCapacity(16)
         for ch in spoken {
@@ -1388,6 +1398,7 @@ class SpeechRecognizer {
                 if !wordBuf.isEmpty {
                     spokenAlnumUtf16Counts.append(wordBuf.utf16.count)
                     spokenAlnumWords.append(wordBuf)
+                    spokenAlnumUtf16.append(Array(wordBuf.utf16))
                     wordBuf = ""
                     wordBuf.reserveCapacity(16)
                 }
@@ -1412,12 +1423,14 @@ class SpeechRecognizer {
                 if !wordBuf.isEmpty {
                     spokenAlnumUtf16Counts.append(wordBuf.utf16.count)
                     spokenAlnumWords.append(wordBuf)
+                    spokenAlnumUtf16.append(Array(wordBuf.utf16))
                     wordBuf = ""
                     wordBuf.reserveCapacity(16)
                 }
                 if ch.isLetter || ch.isNumber {
                     spokenAlnumUtf16Counts.append(ch.utf16.count)
                     spokenAlnumWords.append(String(ch))
+                    spokenAlnumUtf16.append(Array(ch.utf16))
                 }
             } else if ch.isLetter || ch.isNumber {
                 let lower = ch.lowercased()
@@ -1430,6 +1443,7 @@ class SpeechRecognizer {
         if !wordBuf.isEmpty {
             spokenAlnumUtf16Counts.append(wordBuf.utf16.count)
             spokenAlnumWords.append(wordBuf)
+            spokenAlnumUtf16.append(Array(wordBuf.utf16))
         }
         let spokenAlnumCount = spokenAlnumWords.count
 
@@ -1463,8 +1477,11 @@ class SpeechRecognizer {
             // but we keep `srcWord` for the cheap `==` short-circuit above.
             let spkWord = spokenAlnumWords[ri]
             let spkWordCount = spokenAlnumUtf16Counts[ri]
+            // R102: parallel utf16 table lookup replaces the per-call
+            // `Array(b.utf16)` materialization in isFuzzyMatchCachedSrc.
+            let spkWordUtf16 = spokenAlnumUtf16[ri]
 
-            if srcWord == spkWord || isFuzzyMatchCachedSrc(srcIndex: si, b: spkWord, bCount: spkWordCount) {
+            if srcWord == spkWord || isFuzzyMatchCachedSrc(srcIndex: si, b: spkWord, bUtf16: spkWordUtf16, bCount: spkWordCount) {
                 // Count original chars including trailing punctuation
                 matchedCharCount += cachedSourceWordCharCount[si]
                 si += 1
@@ -1482,7 +1499,9 @@ class SpeechRecognizer {
                     for skip in 1...maxSpkSkip {
                         let nextSpk = spokenAlnumWords[ri + skip]
                         let nextSpkCount = spokenAlnumUtf16Counts[ri + skip]
-                        if srcWord == nextSpk || isFuzzyMatchCachedSrc(srcIndex: si, b: nextSpk, bCount: nextSpkCount) {
+                        // R102: parallel utf16 table lookup.
+                        let nextSpkUtf16 = spokenAlnumUtf16[ri + skip]
+                        if srcWord == nextSpk || isFuzzyMatchCachedSrc(srcIndex: si, b: nextSpk, bUtf16: nextSpkUtf16, bCount: nextSpkCount) {
                             ri += skip
                             foundSpk = true
                             break
@@ -1499,7 +1518,7 @@ class SpeechRecognizer {
                         let nextSrc = cachedSourceWordAlnum[si + skip]
                         // R54: src-side utf16 length unused (isFuzzyMatchCachedSrc
                         // looks it up internally from cachedSourceWordAlnumUtf16).
-                        if nextSrc == spkWord || isFuzzyMatchCachedSrc(srcIndex: si + skip, b: spkWord, bCount: spkWordCount) {
+                        if nextSrc == spkWord || isFuzzyMatchCachedSrc(srcIndex: si + skip, b: spkWord, bUtf16: spkWordUtf16, bCount: spkWordCount) {
                             // Add all skipped source words' char counts
                             for s in 0..<skip {
                                 matchedCharCount += cachedSourceWordCharCount[si + s] + 1
@@ -1535,69 +1554,21 @@ class SpeechRecognizer {
         return matchedCharCount
     }
 
-    /// Fast fuzzy match for two alnum-only words.
-    /// `aUtf16Count` / `bUtf16Count` should be the utf16 length of `a` / `b`
-    /// (caller passes pre-computed counts from cachedSourceWordAlnumUtf16Count
-    /// or the spoken-side word length table). For ASCII/BMP-heavy text — which
-    /// is what STT emits — utf16.count matches Character.count, so the same
-    /// tolerance band applies. Avoids re-running String.count's O(N) grapheme
-    /// walk on every comparison (previously called 2× per side per call,
-    /// and isFuzzyMatch is called up to ~12 times per mismatch in the inner
-    /// word-level match loops).
-    private func isFuzzyMatch(_ a: String, _ b: String, aCount: Int? = nil, bCount: Int? = nil) -> Bool {
-        let aLen = aCount ?? a.utf16.count
-        let bLen = bCount ?? b.utf16.count
-        if aLen == 0 || bLen == 0 { return false }
-        // Exact match
-        if a == b { return true }
-        let shorter = min(aLen, bLen)
-        let longer = max(aLen, bLen)
-        // Prefix match — only for words with at least 3 chars to avoid
-        // false positives like "or" matching "organization"
-        if shorter >= 3 && (a.hasPrefix(b) || b.hasPrefix(a)) { return true }
-        // Shared prefix >= 60% of shorter word (min 3 chars shared).
-        // Manual iterator walk over utf16 views — avoids the Zip2 +
-        // PrefixSequence + closure layering that
-        // `zip(a.utf16, b.utf16).prefix(while:).count` would build
-        // (no allocations, just Sequence-protocol dispatch per char).
-        // utf16 indices are Int-backed so index(after:) is cheap.
-        let sharedMax = min(aLen, bLen)
-        var shared = 0
-        if sharedMax >= 3 {
-            let aU16 = a.utf16
-            let bU16 = b.utf16
-            var ai = aU16.startIndex
-            var bi = bU16.startIndex
-            let endA = aU16.index(aU16.startIndex, offsetBy: sharedMax)
-            while ai < endA, aU16[ai] == bU16[bi] {
-                ai = aU16.index(after: ai)
-                bi = bU16.index(after: bi)
-            }
-            shared = aU16.distance(from: aU16.startIndex, to: ai)
-        }
-        if shared >= max(3, sharedMax * 3 / 5) { return true }
-        // Edit distance tolerance — stricter for very short words
-        // Pre-screen by length difference: if the gap already exceeds the
-        // tolerance budget for this word length, skip the DP entirely.
-        if shorter <= 2 { return false } // 2-char words must be exact
-        let tolerance: Int
-        if shorter <= 4 { tolerance = 1 }
-        else if shorter <= 8 { tolerance = 2 }
-        else { tolerance = longer / 3 }
-        if longer - shorter > tolerance { return false }
-        let dist = editDistance(a, b, maxDistance: tolerance)
-        return dist <= tolerance
-    }
-
-    /// R54: hot-path isFuzzyMatch variant for when `a` is one of the cached
+    /// R102: hot-path isFuzzyMatch variant for when `a` is one of the cached
     /// source words. Same exact-match / prefix / shared-prefix / DP checks as
-    /// the String overload, but uses the rebuild-time [UInt16] table so the
-    /// inner editDistance call doesn't allocate `Array(a.utf16)`. Spoken-side
-    /// `b` still allocates inside editDistance — it's freshly built per ASR
-    /// partial. Up to ~12 calls per mismatch in wordLevelMatch's skip
-    /// lookahead loops, so this saves 1 allocation + 1 grapheme walk per
-    /// call on the source side.
-    private func isFuzzyMatchCachedSrc(srcIndex: Int, b: String, bCount: Int) -> Bool {
+    /// the String overload, but:
+    /// - The source side reads its [UInt16] from the rebuild-time cache
+    ///   (R54) — no per-call `Array(a.utf16)`.
+    /// - The spoken side now receives pre-built [UInt16] from the caller
+    ///   (R102) — no per-call `Array(b.utf16)` either, and the prefix +
+    ///   shared-prefix walks share one utf16 traversal instead of three
+    ///   separate ones (`a.hasPrefix`, `b.hasPrefix`, and the prior
+    ///   shared-walk). The combined walk also replaces the awkward
+    ///   `aU16.distance(from:to:)` with a running `shared` counter.
+    /// Net per mismatch in wordLevelMatch's skip-lookahead loops
+    /// (~12 calls/partial): -2 utf16 materializations, -2 String view walks,
+    /// -1 distance() call.
+    private func isFuzzyMatchCachedSrc(srcIndex: Int, b: String, bUtf16: [UInt16], bCount: Int) -> Bool {
         let a = cachedSourceWordAlnum[srcIndex]
         let aLen = cachedSourceWordAlnumUtf16Count[srcIndex]
         if aLen == 0 || bCount == 0 { return false }
@@ -1605,78 +1576,58 @@ class SpeechRecognizer {
         if a == b { return true }
         let shorter = min(aLen, bCount)
         let longer = max(aLen, bCount)
-        // Prefix match — only for words with at least 3 chars to avoid
-        // false positives like "or" matching "organization". The two String
-        // views still allocate on access, but they don't allocate per char
-        // and the prefix walks bail as soon as one mismatch is found.
-        if shorter >= 3 && (a.hasPrefix(b) || b.hasPrefix(a)) { return true }
-        // Shared prefix >= 60% of shorter word (min 3 chars). We reuse the
-        // String view path from the original isFuzzyMatch because the
-        // [UInt16] walking for `a` here would duplicate logic without a
-        // measurable win — the String view is O(1) and the prefix walk
-        // early-exits within ~shared chars.
-        let sharedMax = min(aLen, bCount)
-        var shared = 0
-        if sharedMax >= 3 {
-            let aU16 = a.utf16
-            let bU16 = b.utf16
-            var ai = aU16.startIndex
-            var bi = bU16.startIndex
-            let endA = aU16.index(aU16.startIndex, offsetBy: sharedMax)
-            while ai < endA, aU16[ai] == bU16[bi] {
-                ai = aU16.index(after: ai)
-                bi = bU16.index(after: bi)
-            }
-            shared = aU16.distance(from: aU16.startIndex, to: ai)
-        }
-        if shared >= max(3, sharedMax * 3 / 5) { return true }
         if shorter <= 2 { return false } // 2-char words must be exact
+        // R102: combined prefix + shared-prefix utf16 walk. Original called
+        // a.hasPrefix(b), b.hasPrefix(a), then a separate utf16 shared-prefix
+        // walk — 3 utf16 walks per call. Merged into one: walk shared chars
+        // while they match, then decide prefix (full match on either side)
+        // vs shared (>= 60% of shorter word, min 3).
+        let aU16 = a.utf16
+        let sharedMax = shorter
+        var shared = 0
+        var ai = aU16.startIndex
+        var bi = 0  // Int index into [UInt16]
+        while ai < aU16.endIndex, bi < bUtf16.count, shared < sharedMax,
+              aU16[ai] == bUtf16[bi] {
+            ai = aU16.index(after: ai)
+            bi += 1
+            shared += 1
+        }
+        // R102: prefix-match decision. shared == aLen ⇒ a is fully consumed
+        // (a is prefix of b); shared == bCount ⇒ b is fully consumed
+        // (b is prefix of a). `shorter <= 2` already short-circuited above so
+        // `shared >= 3` implies the shorter side has at least 3 chars.
+        if shared >= 3, shared == aLen || shared == bCount { return true }
+        // R102: shared-prefix >= 60% of shorter word (min 3 chars).
+        if shared >= max(3, sharedMax * 3 / 5) { return true }
         let tolerance: Int
         if shorter <= 4 { tolerance = 1 }
         else if shorter <= 8 { tolerance = 2 }
         else { tolerance = longer / 3 }
         if longer - shorter > tolerance { return false }
-        // R54: pass cached [UInt16] for source side, skip the
-        // `Array(a.utf16)` re-materialization in editDistance.
+        // R102: pass both pre-built [UInt16] tables into editDistance so it
+        // skips the per-call `Array(b.utf16)` materialization.
         let dist = editDistance(
             aCodeUnits: cachedSourceWordAlnumUtf16[srcIndex],
-            b: b,
+            bUtf16: bUtf16,
             maxDistance: tolerance
         )
         return dist <= tolerance
     }
 
-    /// Ukkonen-style bounded edit distance. Exits early once every active DP
-    /// diagonal exceeds the tolerance, which is the common case for
-    /// unrelated words and avoids O(a·b) work.
-    /// Converts to `[UInt16]` UTF-16 code units instead of `[Character]`.
-    /// Previous version allocated `[Character]` on every call (Character
-    /// is 8-16 bytes enum; `[UInt16]` is 2 bytes per element). `isFuzzyMatch`
-    /// calls this up to ~12× per mismatch in the inner word-level loop.
-    /// For STT content (ASCII alnum + CJK BMP) UTF-16 indexing matches
-    /// Character indexing exactly: ASCII chars are 1 UTF-16 unit each,
-    /// CJK is BMP so 1 unit each, and surrogate pairs (rare in word-level
-    /// text) sit inside the fuzzy tolerance band (≥1-char tolerance for
-    /// short words, 2-char for medium, 30 % for long). (R36)
-    private func editDistance(_ a: String, _ b: String, maxDistance: Int = Int.max) -> Int {
-        // R54: skip the source-side `Array(a.utf16)` allocation when the
-        // caller has the precomputed [UInt16] on hand (rebuild-time). Most
-        // hot-path callers come from wordLevelMatch and pass a cached
-        // source word — see editDistance(aCodeUnits:, b:, ...).
-        return editDistance(aCodeUnits: Array(a.utf16), b: b, maxDistance: maxDistance)
-    }
-
-    /// R54: same DP as the String overload but skips `Array(a.utf16)` on the
-    /// caller-supplied [UInt16]. For the source side of isFuzzyMatch the
-    /// [UInt16] is invariant across ASR partials; passing it in directly
-    /// saves 1 allocation + 1 grapheme → utf16 walk per call (~12 calls per
-    /// mismatch in wordLevelMatch's skip-lookahead). Spoken-side words
-    /// still allocate via `Array(b.utf16)` — they're freshly built per
-    /// partial and have no equivalent cache.
-    private func editDistance(aCodeUnits: [UInt16], b: String, maxDistance: Int) -> Int {
-        let bCodeUnits = Array(b.utf16)
+    /// R102: same DP but:
+    /// - Both sides now arrive as pre-built [UInt16] — the spoken side too
+    ///   (caller-built once per ASR partial, looked up at each skip step).
+    ///   Saves 1 allocation + 1 grapheme walk per call (was `Array(b.utf16)`).
+    /// - DP row reused via `editDistanceDPBuffer` — grown on demand, reset
+    ///   in place between calls. Saves the `Array(0...iCount)` allocation
+    ///   that ran on every editDistance invocation (~12 calls/partial).
+    /// - Sub-buffer accesses are inlined through `editDistanceDPBuffer`
+    ///   directly rather than copied into a local `var dp` — Array COW
+    ///   would otherwise re-allocate the row on the first subscript write.
+    private func editDistance(aCodeUnits: [UInt16], bUtf16: [UInt16], maxDistance: Int) -> Int {
         let aCount = aCodeUnits.count
-        let bCount = bCodeUnits.count
+        let bCount = bUtf16.count
         if aCount == 0 { return bCount }
         if bCount == 0 { return aCount }
         let lenDiff = aCount - bCount
@@ -1686,12 +1637,19 @@ class SpeechRecognizer {
         // Always iterate the shorter string on the outer loop to keep the
         // DP row small.
         let (oChars, iChars, oCount, iCount) = aCount <= bCount
-            ? (aCodeUnits, bCodeUnits, aCount, bCount)
-            : (bCodeUnits, aCodeUnits, bCount, aCount)
-        var dp = Array(0...iCount)
+            ? (aCodeUnits, bUtf16, aCount, bCount)
+            : (bUtf16, aCodeUnits, bCount, aCount)
+        // R102: grow-only scratch buffer. First call allocates; subsequent
+        // calls reset the used prefix in place (≤ iCount+1 writes per call).
+        let need = iCount + 1
+        if editDistanceDPBuffer.count < need {
+            editDistanceDPBuffer = Array(0..<need)
+        } else {
+            for j in 0..<need { editDistanceDPBuffer[j] = j }
+        }
         for i in 1...oCount {
-            var prev = dp[0]
-            dp[0] = i
+            var prev = editDistanceDPBuffer[0]
+            editDistanceDPBuffer[0] = i
             let oc = oChars[i - 1]
             // Best possible score for the rest of this row is bounded by
             // abs(i - j) + remaining char differences. Use a diagonal cap.
@@ -1699,10 +1657,10 @@ class SpeechRecognizer {
             // Quick path: if every dp[j] already exceeds tolerance, bail.
             var rowMin = Int.max
             for j in 1...iCount {
-                let temp = dp[j]
+                let temp = editDistanceDPBuffer[j]
                 let cost = oc == iChars[j - 1] ? 0 : 1
-                let v = min(prev + cost, dp[j] + 1, dp[j - 1] + 1)
-                dp[j] = v
+                let v = min(prev + cost, editDistanceDPBuffer[j] + 1, editDistanceDPBuffer[j - 1] + 1)
+                editDistanceDPBuffer[j] = v
                 prev = temp
                 if v < rowMin { rowMin = v }
             }
@@ -1710,7 +1668,7 @@ class SpeechRecognizer {
                 return rowMin
             }
         }
-        return dp[iCount]
+        return editDistanceDPBuffer[iCount]
     }
 
     // tailWords helper removed in R56 — tail3/tail5 now computed in
