@@ -248,11 +248,22 @@ class DictationManager {
             let level = CGFloat(min(rms * 5, 1.0))
 
             DispatchQueue.main.async {
-                // Amortized O(1) ring-trim instead of O(N) removeFirst.
-                self?.audioLevels.append(level)
-                if (self?.audioLevels.count ?? 0) > 40 {
-                    self?.audioLevels.removeFirst((self?.audioLevels.count ?? 0) - 40)
+                // R84: cache `audioLevels.count` once. Previous version read
+                // count twice per tick (once for the >40 guard, once inside
+                // removeFirst's argument). audioLevels is an @Observable-
+                // stored [CGFloat]; each .count access goes through the
+                // synthesized observationRegistrar.access call. The tap fires
+                // at ~15 Hz (1024-frame buffer at 16 kHz mono), so the old
+                // code did 2 redundant reads/tick × 15 Hz = 30 redundant
+                // @Observable accesses/sec. The reorder is equivalent: pre-
+                // append count is N, post-append is N+1; old guard was
+                // `N+1 > 40` ⟺ `N >= 40`; old trim was `(N+1)-40`; new trim
+                // `N - 39` gives the same final array length (40).
+                let count = self?.audioLevels.count ?? 0
+                if count >= 40 {
+                    self?.audioLevels.removeFirst(count - 39)
                 }
+                self?.audioLevels.append(level)
             }
         }
 

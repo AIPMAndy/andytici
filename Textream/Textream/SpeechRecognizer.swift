@@ -725,14 +725,22 @@ class SpeechRecognizer {
 
     // MARK: - Thread-safe buffer appending
 
+    // R84: cache `audioLevels.count` once. Previous version read count twice
+    // per call (one for the >30 guard, one inside removeFirst's argument).
+    // audioLevels is an @Observable-stored [CGFloat]; each .count access goes
+    // through the synthesized observationRegistrar.access call. recordAudioLevel
+    // fires at the AVAudioEngine tap rate (~15 Hz with bufferSize 1024 at 16 kHz
+    // mono), so the original code did 2 redundant count reads/tick × 15 Hz = 30
+    // redundant @Observable accesses/sec. The fire-and-forget trim path is
+    // equivalent because `count + 1 > 30` ⟺ `count >= 30`, and removeFirst(n-29)
+    // leaves exactly 30 elements (matches the old removeFirst((n+1)-30) post-
+    // append behavior).
     private func recordAudioLevel(_ level: CGFloat) {
-        // Append then trim once when over capacity — O(1) amortized instead
-        // of O(N) removeFirst every call. SwiftUI will only observe the
-        // final mutation when the array actually grew.
-        audioLevels.append(level)
-        if audioLevels.count > 30 {
-            audioLevels.removeFirst(audioLevels.count - 30)
+        let count = audioLevels.count
+        if count >= 30 {
+            audioLevels.removeFirst(count - 29)
         }
+        audioLevels.append(level)
         voiceActivityDetector.process(level: level, at: ProcessInfo.processInfo.systemUptime)
     }
 
