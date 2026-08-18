@@ -131,6 +131,16 @@ class NotchOverlayController: NSObject {
     // roundtrip on unchanged frames is invisible to the user and saves
     // up to ~60 ms/sec of WindowServer time when the speaker pauses.
     private var lastCursorFrame: NSRect?
+    // R95: dedup one step earlier than lastCursorFrame. cursorTrackingTimer
+    // runs at 60 Hz; the R71 frame guard catches unchanged `setFrame` calls
+    // but the scan + math + panel.frame.size read on the prior lines still
+    // run. When the cursor is stationary (the dominant state of cursor-
+    // follow mode between spoken phrases), the mouse position is the only
+    // input to `cursorFollowingFrame` — if it hasn't moved, the frame can't
+    // have changed. Catching it here skips NSEvent.mouseLocation propagation
+    // through screenUnderMouse, cursorFollowingFrame math, and a Cocoa
+    // panel.frame.size read per tick.
+    private var lastMouseLocation: CGPoint?
     private var stopButtonPanel: NSPanel?
     private var escMonitor: Any?
 
@@ -276,9 +286,15 @@ class NotchOverlayController: NSObject {
     private func updateCursorPosition() {
         guard let panel else { return }
         let mouse = NSEvent.mouseLocation
+        // R95: early-return when the mouse hasn't moved since the previous
+        // tick. CGPoint.== is 2 CGFloat compares (~ns). The R71 lastCursorFrame
+        // guard remains as a defensive second gate for the case where panel
+        // size or screen layout changed for unrelated reasons.
+        if let prev = lastMouseLocation, prev == mouse { return }
+        lastMouseLocation = mouse
         // R59: reuse the mouse location we just read instead of letting
         // screenUnderMouse() trigger another NSEvent.mouseLocation call +
-        // NSScreen.screens scan on the same 30Hz tick.
+        // NSScreen.screens scan on the same 60Hz tick.
         guard let screen = screenUnderMouse(mouseLocation: mouse) ?? panel.screen ?? NSScreen.main else { return }
         let frame = cursorFollowingFrame(mouse: mouse, panelSize: panel.frame.size, screen: screen)
         // R71: skip the WindowServer roundtrip when the frame is unchanged
