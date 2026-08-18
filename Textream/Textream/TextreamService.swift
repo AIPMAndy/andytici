@@ -24,6 +24,24 @@ class TextreamService: NSObject, ObservableObject {
     @Published var currentPageIndex: Int = 0
     @Published var readPages: Set<Int> = []
 
+    // R86: shared tokenization helper. Previously the pair
+    //   let words = splitTextIntoWords(text)
+    //   let totalCharCount = words.reduce(0) { $0 + $1.count }
+    //                        + max(0, words.count - 1)
+    // was duplicated at 4 call sites (readText, jumpToPage,
+    // setTextFromDirector, updateTextFromDirector). The 4 copies
+    // encode the same rule: "total char count = sum of word lengths
+    // plus single-space separators between words". Extracting a
+    // single helper makes the rule auditable in one place and keeps
+    // future tokenization tweaks (e.g. CJK character counting, locale
+    // separators) to a single edit.
+    private static func tokenize(_ text: String) -> (words: [String], totalCharCount: Int) {
+        let words = splitTextIntoWords(text)
+        let totalCharCount = words.reduce(0) { $0 + $1.count }
+            + max(0, words.count - 1)
+        return (words, totalCharCount)
+    }
+
     var hasNextPage: Bool {
         for i in (currentPageIndex + 1)..<pages.count {
             if !pages[i].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -46,8 +64,7 @@ class TextreamService: NSObject, ObservableObject {
         hideMainWindow()
 
         // Also show on external display if configured (same parsing as overlay)
-        let words = splitTextIntoWords(trimmed)
-        let totalCharCount = words.reduce(0) { $0 + $1.count } + max(0, words.count - 1)
+        let (words, totalCharCount) = Self.tokenize(trimmed)
         // Cache hasNextPage once — each property access is O(P) over remaining pages.
         let nextPage = hasNextPage
 
@@ -117,8 +134,7 @@ class TextreamService: NSObject, ObservableObject {
         guard !text.isEmpty else { return }
 
         // Compute words once and reuse across overlay, external display, and browser
-        let words = splitTextIntoWords(text)
-        let totalCharCount = words.reduce(0) { $0 + $1.count } + max(0, words.count - 1)
+        let (words, totalCharCount) = Self.tokenize(text)
         let nextPage = hasNextPage
 
         // Update content in-place without recreating the panel
@@ -395,8 +411,7 @@ class TextreamService: NSObject, ObservableObject {
         directorIsReading = true
 
         // Compute words once and reuse across overlay, director server, external display, and browser
-        let words = splitTextIntoWords(trimmed)
-        let totalCharCount = words.reduce(0) { $0 + $1.count } + max(0, words.count - 1)
+        let (words, totalCharCount) = Self.tokenize(trimmed)
 
         overlayController.show(
             text: trimmed,
@@ -445,8 +460,7 @@ class TextreamService: NSObject, ObservableObject {
         // Preserve read progress: only update unread portion
         let preservedCharCount = overlayController.speechRecognizer.recognizedCharCount
 
-        let words = splitTextIntoWords(trimmed)
-        let totalCharCount = words.reduce(0) { $0 + $1.count } + max(0, words.count - 1)
+        let (words, totalCharCount) = Self.tokenize(trimmed)
 
         // Update overlay content without resetting speech progress
         overlayController.overlayContent.setWords(words, totalCharCount: totalCharCount)
