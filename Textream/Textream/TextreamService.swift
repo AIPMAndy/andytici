@@ -147,9 +147,14 @@ class TextreamService: NSObject, ObservableObject {
         updatePageInfo()
 
         // Also update external display content in-place
-        externalDisplayController.overlayContent.words = words
-        externalDisplayController.overlayContent.totalCharCount = totalCharCount
-        externalDisplayController.overlayContent.hasNextPage = nextPage
+        // R101: collapse 3 separate property writes into one setWords call so
+        // all three props share a single mutator site (eliminates the
+        // pre-R100 bypass that bypassed the R100 single-entry-point).
+        externalDisplayController.overlayContent.setWords(
+            words,
+            totalCharCount: totalCharCount,
+            hasNextPage: nextPage
+        )
 
         if browserServer.isRunning {
             browserServer.updateContent(
@@ -463,8 +468,13 @@ class TextreamService: NSObject, ObservableObject {
         let (words, totalCharCount) = Self.tokenize(trimmed)
 
         // Update overlay content without resetting speech progress
-        overlayController.overlayContent.setWords(words, totalCharCount: totalCharCount)
-        overlayController.overlayContent.hasNextPage = false
+        // R101: fold hasNextPage into setWords so all three props share one
+        // mutator site (was 2 sequential writes before).
+        overlayController.overlayContent.setWords(
+            words,
+            totalCharCount: totalCharCount,
+            hasNextPage: false
+        )
 
         // Update the speech recognizer with new full text but keep char count
         overlayController.speechRecognizer.updateText(trimmed, preservingCharCount: preservedCharCount)
@@ -473,8 +483,12 @@ class TextreamService: NSObject, ObservableObject {
         directorServer.updateContent(totalCharCount: totalCharCount)
 
         // Update external display & browser
-        externalDisplayController.overlayContent.words = words
-        externalDisplayController.overlayContent.totalCharCount = totalCharCount
+        // R101: collapse 2 separate property writes into one setWords call.
+        externalDisplayController.overlayContent.setWords(
+            words,
+            totalCharCount: totalCharCount,
+            hasNextPage: false
+        )
         if browserServer.isRunning {
             browserServer.updateContent(
                 words: words,

@@ -36,9 +36,7 @@ class ExternalDisplayController {
 
         dismiss()
 
-        overlayContent.words = words
-        overlayContent.totalCharCount = totalCharCount
-        overlayContent.hasNextPage = hasNextPage
+        overlayContent.setWords(words, totalCharCount: totalCharCount, hasNextPage: hasNextPage)
 
         let mirrorAxis = settings.externalDisplayMode == .mirror ? settings.mirrorAxis : nil
         let screenFrame = screen.frame
@@ -338,7 +336,24 @@ struct ExternalDisplayView: View {
                     onManualScroll: { scrolling, newProgress in
                         isUserScrolling = scrolling
                         if !scrolling {
-                            timerWordProgress = max(0, min(Double(words.count), newProgress))
+                            let clamped = max(0, min(Double(words.count), newProgress))
+                            // R101+bug-fix: in wordTracking mode, route the
+                            // user's chosen position through
+                            // speechRecognizer.jumpTo (matching the
+                            // NotchOverlayView/FloatingOverlayView fix). The
+                            // previous code only updated timerWordProgress,
+                            // which wordTracking mode ignores — leaving the
+                            // external display prone to a desynced/blank
+                            // baseline after manual scroll-release.
+                            if mode == .wordTracking {
+                                let progress = words.count > 0
+                                    ? clamped / Double(words.count)
+                                    : 0
+                                let newCharOffset = charOffsetForWordProgress(progress)
+                                speechRecognizer.jumpTo(charOffset: newCharOffset)
+                            } else {
+                                timerWordProgress = clamped
+                            }
                         }
                     },
                     // R78: served from `mode` local.

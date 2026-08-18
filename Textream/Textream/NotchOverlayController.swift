@@ -69,9 +69,13 @@ class OverlayContent {
     /// (Char-offset ⇄ progress lookup moved out to per-view WordIndexTable
     /// caches — this struct no longer carries a separate prefix-sum, so the
     /// historical "drift between words and wordCharOffsets" hazard is gone.)
-    func setWords(_ newWords: [String], totalCharCount: Int) {
+    /// R101: extend to fold `hasNextPage` so the 3 properties share one
+    /// caller-side write site (eliminates TextreamService/ExternalDisplayController
+    /// bypasses that previously wrote all three independently).
+    func setWords(_ newWords: [String], totalCharCount: Int, hasNextPage: Bool = false) {
         self.words = newWords
         self.totalCharCount = totalCharCount
+        self.hasNextPage = hasNextPage
     }
 }
 
@@ -100,6 +104,17 @@ private let red90 = Color.red.opacity(0.9)
 class NotchOverlayController: NSObject {
     private let cursorOffset: CGFloat = 8
     private let screenEdgeMargin: CGFloat = 5
+    // R101: canonical totalCharCount formula — sum of word lengths plus
+    // (words.count - 1) single-space separators between words. Previously
+    // duplicated as three divergent implementations:
+    //   - show():  `reduce(0){$0+$1.count} + max(0, n-1)` (correct)
+    //   - updateContent():  `joined(separator: " ").count` (allocates temp String)
+    //   - TextreamService.tokenize(): `reduce + max(0, n-1)` (correct, R86)
+    // Centralizing eliminates the temp-String allocation and the drift
+    // hazard between the three sites.
+    fileprivate static func totalCharCount(forWords words: [String]) -> Int {
+        return words.reduce(0) { $0 + $1.count } + max(0, words.count - 1)
+    }
     // R85: longest overlay dismiss animation span. NotchOverlayView exit runs
     // 0.15s content fade + 0.1s wait + 0.3s shrink (phase 2 ends at 0.4s).
     // The teardown timer must fire AFTER the visual animation completes,
@@ -157,11 +172,11 @@ class NotchOverlayController: NSObject {
         // computed words/totalCharCount to avoid the O(N) splitTextIntoWords
         // + O(N) reduce running 3× in sequence (overlay, ext display, browser).
         let normalized = words ?? splitTextIntoWords(text)
-        let resolvedTotal = totalCharCount ?? (normalized.reduce(0) { $0 + $1.count } + max(0, normalized.count - 1))
-        // R52: route both `words` and `totalCharCount` through OverlayContent.setWords
-        // so the prefix sum stays in sync (used by O(1) charOffsetForWordProgress).
-        overlayContent.setWords(normalized, totalCharCount: resolvedTotal)
-        overlayContent.hasNextPage = hasNextPage
+        let resolvedTotal = totalCharCount ?? Self.totalCharCount(forWords: normalized)
+        // R101: route all 3 props (words + totalCharCount + hasNextPage) through
+        // the single OverlayContent.setWords entry point so callers can never
+        // re-introduce a bypass that drifts the three.
+        overlayContent.setWords(normalized, totalCharCount: resolvedTotal, hasNextPage: hasNextPage)
 
         let settings = NotchSettings.shared
 
@@ -221,9 +236,11 @@ class NotchOverlayController: NSObject {
         // words/totalCharCount assignment. The previous direct write of
         // `overlayContent.wordCharOffsets` here was a second-source-of-truth
         // bug — OverlayContent.setWords is now the canonical mutator.
-        let resolvedTotal = normalized.joined(separator: " ").count
-        overlayContent.setWords(normalized, totalCharCount: resolvedTotal)
-        overlayContent.hasNextPage = hasNextPage
+        // R101: use the canonical Int reduce formula (drops the temp String
+        // allocation that `joined(separator: " ").count` incurred) and fold
+        // hasNextPage into setWords so all three props share one write site.
+        let resolvedTotal = Self.totalCharCount(forWords: normalized)
+        overlayContent.setWords(normalized, totalCharCount: resolvedTotal, hasNextPage: hasNextPage)
 
         let settings = NotchSettings.shared
         if settings.listeningMode != .classic {
@@ -1078,7 +1095,28 @@ struct NotchOverlayView: View {
                 onManualScroll: { scrolling, newProgress in
                     isUserScrolling = scrolling
                     if !scrolling {
-                        timerWordProgress = max(0, min(Double(words.count), newProgress))
+                        let clampedProgress = max(0, min(Double(words.count), newProgress))
+                        if mode == .wordTracking {
+                            // In voice-driven mode the visual position is anchored
+                            // to speechRecognizer.recognizedCharCount, NOT to
+                            // timerWordProgress. Previously this branch only
+                            // updated timerWordProgress (which wordTracking mode
+                            // never reads), so the user's manual scroll was
+                            // discarded on the next ASR partial — the view
+                            // snapped back to the ASR-stale position, and in
+                            // some layout states the residual manualOffset
+                            // animation left SpeechScrollView rendering content
+                            // outside the viewport (black/empty panel).
+                            // Hand off the user's chosen position to ASR via
+                            // jumpTo, mirroring what onWordTap already does.
+                            let progress = words.count > 0
+                                ? clampedProgress / Double(words.count)
+                                : 0
+                            let newCharOffset = charOffsetForWordProgress(progress)
+                            speechRecognizer.jumpTo(charOffset: newCharOffset)
+                        } else {
+                            timerWordProgress = clampedProgress
+                        }
                     }
                 },
                 smoothScroll: mode != .wordTracking,
@@ -1627,7 +1665,23 @@ struct FloatingOverlayView: View {
                 onManualScroll: { scrolling, newProgress in
                     isUserScrolling = scrolling
                     if !scrolling {
-                        timerWordProgress = max(0, min(Double(words.count), newProgress))
+                        let clampedProgress = max(0, min(Double(words.count), newProgress))
+                        if mode == .wordTracking {
+                            // Same handoff logic as NotchOverlayView: in
+                            // wordTracking mode, route the user's chosen
+                            // position through speechRecognizer.jumpTo so the
+                            // ASR baseline tracks manual scroll (previously
+                            // only timerWordProgress was updated, which
+                            // wordTracking mode ignores, leaving the panel
+                            // prone to black/empty after scroll-release).
+                            let progress = words.count > 0
+                                ? clampedProgress / Double(words.count)
+                                : 0
+                            let newCharOffset = charOffsetForWordProgress(progress)
+                            speechRecognizer.jumpTo(charOffset: newCharOffset)
+                        } else {
+                            timerWordProgress = clampedProgress
+                        }
                     }
                 },
                 smoothScroll: mode != .wordTracking,
