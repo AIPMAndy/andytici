@@ -102,8 +102,22 @@ struct HighlightingTextEditor: NSViewRepresentable {
             }
             context.coordinator.lastAppliedText = text
             context.coordinator.lastAppliedTextLength = newLen
+            // R88: hoist `updateWritingDirection` inside the text-changed
+            // guard. The previous code called it unconditionally after the
+            // `if textView.string != text { ... }` block. `textBaseDirection`
+            // walks every Unicode scalar of `text` (O(N) via `for scalar in
+            // text.unicodeScalars { ... isAlphabetic ... }`) and produces an
+            // identical result for identical text. updateNSView also fires on
+            // non-text changes (caretPosition binding, highlightRange prop,
+            // onUserEdit closure-identity change) — ~3 times per ASR partial
+            // at 5 Hz, so ~15 wasted textBaseDirection walks/sec during
+            // dictation. `makeNSView` (line 68) and `textDidChange`
+            // (line 173) already invoke updateWritingDirection explicitly for
+            // their respective first-keystroke and binding-flush paths, so
+            // the only path that legitimately needed it here was the
+            // text-changed branch itself.
+            updateWritingDirection(textView, text: text)
         }
-        updateWritingDirection(textView, text: text)
 
         // Apply bump highlight on newly dictated range
         if let range = highlightRange, range.location + range.length <= textView.string.count {
