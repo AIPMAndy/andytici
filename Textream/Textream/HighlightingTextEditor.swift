@@ -116,7 +116,45 @@ struct HighlightingTextEditor: NSViewRepresentable {
                 let scanRange = NSRange(location: scanStart, length: newLen - scanStart)
                 context.coordinator.applyHighlighting(textView, onlyInRange: scanRange)
             } else {
-                context.coordinator.applyHighlighting(textView)
+                // R117: shrink the bracket-rescan region to the actual edit
+                // range instead of rescanning the whole text. prevText ↔
+                // text longest-common-prefix + longest-common-suffix walks
+                // using NSString.character(at:) (O(1) per call) give the
+                // minimal diff range in NSRange (UTF-16) coordinates; any
+                // bracket annotations outside that range are guaranteed
+                // unchanged from the previous applyHighlighting run. We
+                // dispatch to applyHighlighting(_:onlyInRange:) which
+                // resets attrs only in `diffRange` and re-scans brackets
+                // with a 50-char left buffer to catch brackets straddling
+                // the left edge of the edit.
+                //
+                // Common case: 1-char keystroke in the middle of a 50 KB
+                // script — old path did a 50 K regex scan per keystroke,
+                // new path does ~25 K + ~25 K char compares (one-time per
+                // edit) plus a ~50-char regex scan. Worst case (full text
+                // replacement, e.g. paste) the diff covers everything and
+                // the regex scan still spans the full text — same cost as
+                // before, no regression.
+                let prevNS = context.coordinator.lastAppliedText as NSString
+                let newNS = text as NSString
+                let minLen = min(prevLen, newLen)
+                var prefixLen = 0
+                while prefixLen < minLen
+                      && prevNS.character(at: prefixLen) == newNS.character(at: prefixLen) {
+                    prefixLen += 1
+                }
+                var suffixLen = 0
+                while suffixLen < (minLen - prefixLen)
+                      && prevNS.character(at: prevLen - 1 - suffixLen)
+                       == newNS.character(at: newLen - 1 - suffixLen) {
+                    suffixLen += 1
+                }
+                let diffStart = prefixLen
+                let diffEnd = max(prefixLen, newLen - suffixLen)
+                let diffRange = NSRange(location: diffStart, length: diffEnd - diffStart)
+                if diffRange.length > 0 {
+                    context.coordinator.applyHighlighting(textView, onlyInRange: diffRange)
+                }
             }
             context.coordinator.lastAppliedText = text
                 context.coordinator.lastAppliedTextLength = newLen
