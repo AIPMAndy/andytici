@@ -82,34 +82,9 @@ class DirectorServer {
     // R40: pre-encode cheap signature — same pattern as BrowserServer.
     // Skips the encoder entirely on idle ticks when no user-visible field
     // changed since the last tick.
-    private var lastSigCharCount: Int = -1
-    private var lastSigIsDone: Bool = false
-    private var lastSigIsListening: Bool = false
-    private var lastSigLastSpoken: String = ""
-    private var lastSigAudioCount: Int = -1
-    private var lastSigAudioLast: CGFloat = 0
-
-    private func cheapSignatureChanged(
-        highlightedCharCount: Int, isDone: Bool, isListening: Bool,
-        lastSpokenText: String, audioLevels: [CGFloat]
-    ) -> Bool {
-        if highlightedCharCount != lastSigCharCount { return true }
-        if isDone != lastSigIsDone { return true }
-        if isListening != lastSigIsListening { return true }
-        if lastSpokenText != lastSigLastSpoken { return true }
-        if audioLevels.count != lastSigAudioCount { return true }
-        if let tail = audioLevels.last, tail != lastSigAudioLast { return true }
-        return false
-    }
-
-    private func cacheSignature(_ state: DirectorState) {
-        lastSigCharCount = state.highlightedCharCount
-        lastSigIsDone = state.isDone
-        lastSigIsListening = state.isListening
-        lastSigLastSpoken = state.lastSpokenText
-        lastSigAudioCount = state.audioLevels.count
-        lastSigAudioLast = state.audioLevels.last ?? 0
-    }
+    // R121: shared with BrowserServer via CheapStateSignature. Same O(1)
+    // comparison, single source of truth for "what counts as a state change".
+    private var sig = CheapStateSignature()
 
     // Callbacks
     var onSetText: ((String) -> Void)?
@@ -367,7 +342,7 @@ class DirectorServer {
     private func broadcast(_ state: DirectorState) {
         guard !wsConnections.isEmpty else { return }
         // R40: cheap pre-encode dedup.
-        if !cheapSignatureChanged(
+        if !sig.changed(
             highlightedCharCount: state.highlightedCharCount,
             isDone: state.isDone,
             isListening: state.isListening,
@@ -385,11 +360,23 @@ class DirectorServer {
 
         // Skip broadcast if state hasn't changed
         if let last = lastBroadcastState, last == data {
-            cacheSignature(state)
+            sig.update(
+                highlightedCharCount: state.highlightedCharCount,
+                isDone: state.isDone,
+                isListening: state.isListening,
+                lastSpokenText: state.lastSpokenText,
+                audioLevels: state.audioLevels
+            )
             return
         }
         lastBroadcastState = data
-        cacheSignature(state)
+        sig.update(
+            highlightedCharCount: state.highlightedCharCount,
+            isDone: state.isDone,
+            isListening: state.isListening,
+            lastSpokenText: state.lastSpokenText,
+            audioLevels: state.audioLevels
+        )
 
         let connections = authenticatedConnectionsList
         guard !connections.isEmpty else { return }

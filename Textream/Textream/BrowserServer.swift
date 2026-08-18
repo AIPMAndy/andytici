@@ -78,37 +78,17 @@ class BrowserServer {
     // a handful of cheap fields (Int + Bool + String + array tail) lets us
     // skip the encode entirely on idle ticks. When ASR is silent and the
     // user isn't scrolling, this saves ~10 full encodes/sec.
-    private var lastSigCharCount: Int = -1
-    private var lastSigIsDone: Bool = false
-    private var lastSigIsListening: Bool = false
-    private var lastSigLastSpoken: String = ""
-    private var lastSigAudioCount: Int = -1
-    private var lastSigAudioLast: CGFloat = 0
+    private let wsMetadata = NWProtocolWebSocket.Metadata(opcode: .text)
     // R42: track the words array hash so the server only includes `words`
     // in the encoded payload when the content actually changes (page switch,
     // source edit, fresh client connection). On steady 10Hz ticks during
     // ASR the words payload is omitted — the browser keeps `cachedWords`.
     private var lastBroadcastWordsHash: Int = 0
-    // R112: cache the WebSocket metadata + content context. Both are
-    // immutable per-server constants (opcode .text, identifier "ws") but
-    // broadcast() was re-allocating them every 10 Hz tick. 10 allocs/sec
-    // saved on this server; same pattern mirrored to DirectorServer.
-    private let wsMetadata = NWProtocolWebSocket.Metadata(opcode: .text)
-
-    private func cheapSignatureChanged(
-        highlightedCharCount: Int, isDone: Bool, isListening: Bool,
-        lastSpokenText: String, audioLevels: [CGFloat]
-    ) -> Bool {
-        if highlightedCharCount != lastSigCharCount { return true }
-        if isDone != lastSigIsDone { return true }
-        if isListening != lastSigIsListening { return true }
-        if lastSpokenText != lastSigLastSpoken { return true }
-        if audioLevels.count != lastSigAudioCount { return true }
-        // Sample only the last sample — earlier samples change monotonically
-        // during a burst but the trailing edge is enough to detect motion.
-        if let tail = audioLevels.last, tail != lastSigAudioLast { return true }
-        return false
-    }
+    // R121: shared cheap-signature dedup (extracted from this file + DirectorServer).
+    // Same O(1) Int/Bool/String/tail comparison, now lives in one place so the
+    // "what counts as a state change" rule is auditable and edits to the field
+    // set (e.g. adding `audioLevels.max`) stay in sync across both servers.
+    private var sig = CheapStateSignature()
 
     /// Cheap content-hash for the words array. Mixes count with three
     /// sampling points (first, middle, last) so a tiny edit anywhere in
@@ -381,7 +361,7 @@ class BrowserServer {
         guard !wsConnections.isEmpty else { return }
         // R40: cheap pre-encode dedup. Skip the encoder entirely when no
         // user-visible field changed since the last tick.
-        if !cheapSignatureChanged(
+        if !sig.changed(
             highlightedCharCount: state.highlightedCharCount,
             isDone: state.isDone,
             isListening: state.isListening,
@@ -408,11 +388,23 @@ class BrowserServer {
         if let last = lastBroadcastState, last == data {
             // Even though the encoder produced identical bytes, refresh the
             // cheap signature so we don't repeat the encode next tick.
-            cacheSignature(resolvedState)
+            sig.update(
+                highlightedCharCount: resolvedState.highlightedCharCount,
+                isDone: resolvedState.isDone,
+                isListening: resolvedState.isListening,
+                lastSpokenText: resolvedState.lastSpokenText,
+                audioLevels: resolvedState.audioLevels
+            )
             return
         }
         lastBroadcastState = data
-        cacheSignature(resolvedState)
+        sig.update(
+            highlightedCharCount: resolvedState.highlightedCharCount,
+            isDone: resolvedState.isDone,
+            isListening: resolvedState.isListening,
+            lastSpokenText: resolvedState.lastSpokenText,
+            audioLevels: resolvedState.audioLevels
+        )
         // R112: reuse cached WebSocket metadata. The opcode and identifier
         // never change per-server; allocating per-tick was pure waste
         // (10 allocs/sec at 10 Hz broadcast).
@@ -420,15 +412,6 @@ class BrowserServer {
         for conn in wsConnections {
             conn.send(content: data, contentContext: ctx, completion: .idempotent)
         }
-    }
-
-    private func cacheSignature(_ state: BrowserState) {
-        lastSigCharCount = state.highlightedCharCount
-        lastSigIsDone = state.isDone
-        lastSigIsListening = state.isListening
-        lastSigLastSpoken = state.lastSpokenText
-        lastSigAudioCount = state.audioLevels.count
-        lastSigAudioLast = state.audioLevels.last ?? 0
     }
 
     // MARK: - Helpers
