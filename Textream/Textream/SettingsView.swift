@@ -1100,6 +1100,14 @@ struct SettingsView: View {
     // MARK: - Remote Tab
 
     @State private var localIP: String = BrowserServer.localIPAddress() ?? "localhost"
+    // R105: URL-keyed QR image cache for browserTab. Replaces the previous
+    // inline CIContext+CIFilter pipeline that ran on every body re-render.
+    // browserTab body re-renders on every keystroke in the port TextField
+    // that produces a valid UInt16 (the Binding's set closure rejects
+    // invalid input but still triggers a body re-render per typed digit),
+    // so typing `8080` triggered 4 QR regenerations per tab. The URL only
+    // changes when IP or port changes, so the hit path is constant-time.
+    @State private var browserQRCache = QRCodeCache()
     @State private var showAdvanced: Bool = false
 
     private var browserTab: some View {
@@ -1121,7 +1129,12 @@ struct SettingsView: View {
 
                 let url = "http://\(localIP):\(settings.browserServerPort)"
 
-                if let qrImage = generateQRCode(from: url) {
+                // R105: use browserQRCache instead of the inline generator.
+                // body re-renders on every port TextField keystroke that
+                // produces a valid UInt16 — typing `8080` triggered 4 QR
+                // regenerations per tab previously. The cache returns the
+                // same NSImage whenever the URL hasn't changed.
+                if let qrImage = browserQRCache.image(for: url) {
                     HStack {
                         Spacer()
                         Image(nsImage: qrImage)
@@ -1214,6 +1227,10 @@ struct SettingsView: View {
     // MARK: - Director Tab
 
     @State private var directorLocalIP: String = BrowserServer.localIPAddress() ?? "localhost"
+    // R105: URL-keyed QR image cache for directorTab. Same rationale as
+    // browserQRCache — body re-renders on every port TextField keystroke
+    // that produces a valid UInt16.
+    @State private var directorQRCache = QRCodeCache()
     @State private var showDirectorAdvanced: Bool = false
 
     private var directorTab: some View {
@@ -1235,7 +1252,12 @@ struct SettingsView: View {
 
                 let url = "http://\(directorLocalIP):\(settings.directorServerPort)"
 
-                if let qrImage = generateQRCode(from: url) {
+                // R105: use directorQRCache instead of the inline generator.
+                // body re-renders on every port TextField keystroke that
+                // produces a valid UInt16 — typing `8080` triggered 4 QR
+                // regenerations per tab previously. The cache returns the
+                // same NSImage whenever the URL hasn't changed.
+                if let qrImage = directorQRCache.image(for: url) {
                     HStack {
                         Spacer()
                         Image(nsImage: qrImage)
@@ -1404,20 +1426,6 @@ struct SettingsView: View {
             }
             .buttonStyle(.plain)
         }
-    }
-
-    // MARK: - QR Code
-
-    private func generateQRCode(from string: String) -> NSImage? {
-        let context = CIContext()
-        let filter = CIFilter.qrCodeGenerator()
-        filter.message = Data(string.utf8)
-        filter.correctionLevel = "M"
-        guard let ciImage = filter.outputImage else { return nil }
-        let scale = 10.0
-        let scaled = ciImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-        guard let cgImage = context.createCGImage(scaled, from: scaled.extent) else { return nil }
-        return NSImage(cgImage: cgImage, size: NSSize(width: scaled.extent.width, height: scaled.extent.height))
     }
 
     // MARK: - Helpers

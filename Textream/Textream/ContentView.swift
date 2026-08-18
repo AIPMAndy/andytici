@@ -26,6 +26,11 @@ struct ContentView: View {
     @State private var languageSuggestion: SpeechLanguageSuggestion?
     @State private var ignoredLanguageIdentifier: String?
     @State private var languageDetectionTask: Task<Void, Never>?
+    // R105: URL-keyed QR image cache for directorOverlay. Replaces the
+    // previous inline CIContext+CIFilter pipeline that ran on every body
+    // re-render (~1-3 ms each). The URL only changes when IP or port
+    // changes, so the hit path is a constant-time String != String.
+    @State private var directorQRCache = QRCodeCache()
     @FocusState private var isTextFocused: Bool
 
     private let defaultText = ""
@@ -490,7 +495,7 @@ struct ContentView: View {
             if let ip = BrowserServer.localIPAddress() {
                 let url = "http://\(ip):\(NotchSettings.shared.directorServerPort)"
 
-                if let qrImage = generateDirectorQRCode(from: url) {
+                if let qrImage = directorQRCache.image(for: url) {
                     Image(nsImage: qrImage)
                         .interpolation(.none)
                         .resizable()
@@ -530,18 +535,6 @@ struct ContentView: View {
             .padding(.bottom, 20)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func generateDirectorQRCode(from string: String) -> NSImage? {
-        let context = CIContext()
-        let filter = CIFilter.qrCodeGenerator()
-        filter.message = Data(string.utf8)
-        filter.correctionLevel = "M"
-        guard let ciImage = filter.outputImage else { return nil }
-        let scale = 10.0
-        let scaled = ciImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-        guard let cgImage = context.createCGImage(scaled, from: scaled.extent) else { return nil }
-        return NSImage(cgImage: cgImage, size: NSSize(width: scaled.extent.width, height: scaled.extent.height))
     }
 
     var body: some View {
