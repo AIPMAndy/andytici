@@ -272,8 +272,30 @@ struct ContentView: View {
         dictation.onNewSegment = nil
     }
 
+    // R81: cache `isRecording`, `isRunning`, `hasAnyContent` once per body
+    // render. Each body re-render of mainContent previously read:
+    //   • `isRecording` 7 times — 5 inside VStack + 2 in Button action context
+    //     (line 292 guard, line 333 if, line 345 Image, line 351 background,
+    //     line 380 disabled compound, line 381 opacity compound,
+    //     line 386 animation value). Each `isRecording` access = 2
+    //     DictationManager @Observable reads (isRecording + isStarting).
+    //   • `isRunning` 8 times (line 356 disabled, line 357 opacity, line 360
+    //     Button action if, line 367 Image, line 369 Text, line 375 background,
+    //     line 380 disabled compound, line 381 opacity compound). Each
+    //     `isRunning` access is a wrapper around `@State Bool`.
+    //   • `hasAnyContent` 2 times (line 380 disabled compound, line 381
+    //     opacity compound). Each `hasAnyContent` access walks
+    //     `service.pages.contains { !$0.trimmingCharacters(...).isEmpty }`
+    //     — O(Pages) and allocates a per-page trimmed String each iteration.
+    // Hoisting to body-level locals (cached once per body render) eliminates
+    // the amplification. SwiftUI re-creates closures on every body render and
+    // captures enclosing scope, so the closures inside VStack always see fresh
+    // values when isRecording/isRunning/hasAnyContent change.
     private var mainContent: some View {
-        VStack(spacing: 0) {
+        let recording = isRecording
+        let running = isRunning
+        let hasContent = hasAnyContent
+        return VStack(spacing: 0) {
             if let languageSuggestion {
                 languageSuggestionBanner(languageSuggestion)
                     .transition(.move(edge: .top).combined(with: .opacity))
@@ -289,7 +311,7 @@ struct ContentView: View {
                     onUserEdit: { userManualOverride = false }
                 )
                 .onChange(of: editorCaretPosition) { _, newPos in
-                    guard isRecording else { return }
+                    guard recording else { return }
                     // If caret moved away from end of current segment, the user clicked
                     // or scrolled to a different position. Hand control back: ASR will
                     // stop overwriting text/selection until the user types again.
@@ -330,7 +352,7 @@ struct ContentView: View {
                             Spacer()
 
                             Button {
-                                if isRecording {
+                                if recording {
                                     stopRecording()
                                 } else {
                                     startRecording()
@@ -342,48 +364,48 @@ struct ContentView: View {
                                             .controlSize(.small)
                                             .tint(.white)
                                     } else {
-                                        Image(systemName: isRecording ? "pause.fill" : "mic.fill")
+                                        Image(systemName: recording ? "pause.fill" : "mic.fill")
                                             .font(.system(size: 16, weight: .semibold))
                                     }
                                 }
                                 .foregroundStyle(.white)
                                 .frame(width: 40, height: 40)
-                                .background(isRecording ? Color.orange : Color.red)
+                                .background(recording ? Color.orange : Color.red)
                                 .clipShape(Circle())
                                 .shadow(color: .black.opacity(0.2), radius: 8, y: 4)
                             }
                             .buttonStyle(.plain)
-                            .disabled(isRunning)
-                            .opacity(isRunning ? 0.4 : 1)
+                            .disabled(running)
+                            .opacity(running ? 0.4 : 1)
 
                             Button {
-                                if isRunning {
+                                if running {
                                     stop()
                                 } else {
                                     run()
                                 }
                             } label: {
                                 HStack(spacing: 6) {
-                                    Image(systemName: isRunning ? "stop.fill" : "play.fill")
+                                    Image(systemName: running ? "stop.fill" : "play.fill")
                                         .font(.system(size: 16, weight: .bold))
-                                    Text(isRunning ? "停止" : "开始提词")
+                                    Text(running ? "停止" : "开始提词")
                                         .font(.system(size: 14, weight: .semibold))
                                 }
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 18)
                                 .frame(height: 44)
-                                .background(isRunning ? Color.red : Color.accentColor)
+                                .background(running ? Color.red : Color.accentColor)
                                 .clipShape(Capsule())
                                 .shadow(color: .black.opacity(0.2), radius: 10, y: 4)
                             }
                             .buttonStyle(.plain)
-                            .disabled((!isRunning && !hasAnyContent) || isRecording)
-                            .opacity((!hasAnyContent && !isRunning) || isRecording ? 0.4 : 1)
+                            .disabled((!running && !hasContent) || recording)
+                            .opacity((!hasContent && !running) || recording ? 0.4 : 1)
                         }
                     }
                     .padding(20)
                 }
-                .animation(.easeInOut(duration: 0.25), value: isRecording)
+                .animation(.easeInOut(duration: 0.25), value: recording)
 
                 // Drop zone overlay — sits on top so TextEditor doesn't steal the drop
                 if isDroppingPresentation {
