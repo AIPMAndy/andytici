@@ -1,217 +1,163 @@
-# Andy题词
-
-> **A macOS teleprompter built for Chinese-speaking video creators.**
-> Read your script out loud — the app highlights the word you're saying in real time, so you never look away from the camera.
-
-[![Release](https://img.shields.io/github/v/release/AIPMAndy/andytici?include_prereleases&style=flat-square)](https://github.com/AIPMAndy/andytici/releases)
-[![Platform](https://img.shields.io/badge/macOS-15.0%2B-blue?style=flat-square)](https://www.apple.com/macos/)
-[![Arch](https://img.shields.io/badge/arm64%20%7C%20x86__64-universal-orange?style=flat-square)](#download)
-[![License](https://img.shields.io/github/license/AIPMAndy/andytici?style=flat-square)](LICENSE)
-
-[中文 README](./README.zh-CN.md) · [Releases](https://github.com/AIPMAndy/andytici/releases) · [Issues](https://github.com/AIPMAndy/andytici/issues)
-
----
-
 <p align="center">
-  <img src="Textream/Textream/Assets.xcassets/AppIcon.appiconset/icon_128x128@2x.png" width="128" alt="Andy题词 icon"/>
+  <img src="Textream/Textream/Assets.xcassets/AppIcon.appiconset/icon_128x128@2x.png" width="112" alt="Andy题词 app icon">
 </p>
 
-Andy题词 (Andy Tici — "题词" = teleprompter cue) is a native macOS teleprompter designed for **口播 (kǒubō) video creators** on 抖音 / 小红书 / 视频号. It pairs an on-device Chinese speech recognizer with a word-level teleprompter, so the cursor follows your voice — not the other way around.
+<h1 align="center">Andy题词</h1>
 
-![Main window](docs/screenshots/main-window.jpg)
+<p align="center">
+  <strong>The teleprompter that follows your voice.</strong><br>
+  A native macOS workspace for Chinese video creators on 抖音, 小红书 and 视频号.
+</p>
+
+<p align="center">
+  <a href="https://github.com/AIPMAndy/andytici/releases"><img src="https://img.shields.io/github/v/release/AIPMAndy/andytici?style=flat&label=release&color=F5C542" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/macOS-15%2B-111111?style=flat&logo=apple&logoColor=white" alt="macOS 15 or later">
+  <img src="https://img.shields.io/badge/Apple%20Silicon%20%2B%20Intel-universal-111111?style=flat" alt="Universal binary">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/AIPMAndy/andytici?style=flat&color=111111" alt="MIT license"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/AIPMAndy/andytici/releases/latest"><strong>Download</strong></a>
+  &nbsp;·&nbsp;
+  <a href="README.zh-CN.md">中文说明</a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/AIPMAndy/andytici/issues">Feedback</a>
+</p>
+
+<br>
+
+<p align="center">
+  <img src="docs/screenshots/andy-tici-main.png" width="100%" alt="Andy题词 main editor with a Chinese voice-over script">
+</p>
+
+<p align="center"><sub>Write, organize and rehearse the whole script without leaving the recording flow.</sub></p>
 
 ---
 
-## Why Andy题词?
+## Read at your pace
 
-| Problem with general teleprompters | How Andy题词 solves it |
+Most teleprompters scroll on a timer. Speak faster and they fall behind; pause for a thought and they run away.
+
+Andy题词 listens to your speech and moves the highlight with you. You can pause, restart a sentence or improvise without chasing the script. Your eyes stay near the camera and your delivery stays natural.
+
+| | |
 | --- | --- |
-| English-first ASR; misreads 点赞/扣1/上链接 | On-device `zh-CN` recognizer + ~36 cue words injected as `contextualStrings` |
-| One-size-fits-all pacing | Platform presets (抖音 / 小红书 / 视频号 / 通用) tune scroll speed, idle threshold, and font size |
-| Auto-scroll drifts when you pause or speed up | Word-level highlight tracks the recognizer, not a timer — pause anywhere, speed up, it follows |
-| No mirror to a second screen | Built-in external display mirroring via `ExternalDisplayController` |
-| Generic toolbar UI | Black-gold palette, Chinese-first Settings, 中文 ASR fallback messages |
+| **🎙 Voice-following highlight**<br>Chinese speech recognition tracks the current word instead of guessing from elapsed time. | **🧠 Creator vocabulary**<br>Common 口播 phrases such as 点赞、关注、扣1 and 上链接 are supplied as recognition context. |
+| **🖥 Camera-friendly layouts**<br>Use the main window, a floating overlay, the MacBook notch area or a connected display. | **🔒 Local-first workflow**<br>No account and no telemetry. Scripts are stored locally as portable `.andytici` documents. |
 
----
+## From script to camera in three steps
 
-## Features
+1. **Paste or open your script** — organize longer copy across multiple pages and add visual cue markers where needed.
+2. **Choose your reading setup** — tune font, width, placement, scroll behavior and display mode.
+3. **Start speaking** — the current phrase stays highlighted while Andy题词 follows your voice.
 
-### 🎙️ Real-time Chinese ASR follow-along
-- On-device `SFSpeechRecognizer` with locale `zh-CN`
-- Word-level highlight follows the recognizer's transcription in real time
-- Microphone permission handled gracefully — refused? The app opens System Settings for you and falls back to manual scroll
-- ~36 常用口播词 (点赞 / 关注 / 扣1 / 上链接 / 福利 / 家人们 / 姐妹们 / 抖音 / 小红书 …) injected as `contextualStrings` for higher accuracy on voice-over-style scripts
+## Built for Chinese creators
 
-### 📱 Platform presets
-Switch platforms in the toolbar — each preset overrides the recommended scroll speed, idle threshold, and font size:
+- **Chinese-first recognition** with configurable locale and creator vocabulary hints
+- **Multi-page scripts** saved as lightweight `.andytici` bundles
+- **Hook templates and cue markers** for emphasis, pauses and key lines
+- **Notch, floating and external-display modes** for different camera setups
+- **Local browser view and director mode** for another device on the same network
+- **macOS Services and URL scheme** for sending selected text from Shortcuts, Raycast, Alfred or another app
 
-| Platform | Default scroll | Idle threshold | Best for |
-| --- | --- | --- | --- |
-| 抖音 | 280 字/min | 1.2 s | Fast-paced hooks |
-| 小红书 | 240 字/min | 1.5 s | Lifestyle / tutorial |
-| 视频号 | 220 字/min | 1.8 s | Thoughtful commentary |
-| 通用 | 240 字/min | 1.5 s | Mixed content |
+### Automation URL
 
-### ⛶ Display modes
-- **Window** — main editor + side panel + floating controls
-- **Full screen** — system full-screen with edge-to-edge script view, control overlay only on hover
-- **Notch overlay** — small floating panel for the macOS notch area (MacBook Pro 14"/16")
-- **External display** — mirror the current page onto a connected display for camera-mounted teleprompter rigs
-
-### 🔗 URL scheme
-Drop a script into Andy题词 from any app that supports URL actions:
-
-```
+```text
 andytici://read?text=今天我们聊一聊...
-andytici://read?text=<urlencoded-multi-line-script>
 ```
 
-Receiving apps include Raycast, Alfred, Shortcuts, and any browser `javascript:` URL.
-
-### 🎯 macOS Services integration
-Select any text in any app → 右键 → 服务 → 在 Andy题词 中朗读。The selected text becomes a new page.
-
-### 🛠 Fully local
-No telemetry, no cloud account, no update server. All scripts are saved as `.andytici` bundles locally.
+URL-encode multi-line scripts before passing them to `text=`.
 
 ---
 
-## Download
+## Install
 
-The latest universal binary (Apple Silicon + Intel) lives in [Releases](https://github.com/AIPMAndy/andytici/releases):
+Download the newest disk image from [GitHub Releases](https://github.com/AIPMAndy/andytici/releases/latest), open it and drag **Andy题词.app** into `/Applications`.
 
-| File | Size | Format |
-| --- | --- | --- |
-| `Andy题词_0.1.1_universal.dmg` | ~4 MB | Apple Disk Image (UDZO compressed) |
+The current release is ad-hoc signed. On first launch, macOS may ask you to approve it:
 
-### Install
+1. In Finder, right-click **Andy题词.app** and choose **Open**.
+2. Confirm **Open** once more.
+3. Grant Microphone and Speech Recognition access when you want voice-following mode.
 
-1. Open the `.dmg`
-2. Drag **Andy题词.app** into `/Applications`
-3. **First launch** — macOS will block the app because it's ad-hoc signed (no Apple Developer ID). Bypass with one of:
-   - **Right-click** the app in Finder → **打开** → **打开** (confirm)
-   - Or: System Settings → Privacy & Security → scroll down → "Andy题词 was blocked" → **仍要打开**
-
-   You only need to do this once. Subsequent launches work normally.
-
-4. Grant **Microphone** permission when prompted — this is required for the ASR follow-along mode. The app degrades gracefully if you decline.
-
-> **Note on code signing.** v0.1.1 ships ad-hoc signed (Apple Developer ID enrollment is pending). Future releases will add notarization once the Apple Developer Program is set up. See [Known Limitations](#known-limitations).
-
----
+You only need to approve the app once.
 
 ## Build from source
 
-No Xcode required — `swiftc` + `lipo` + `iconutil` + `codesign` are all in the Command Line Tools.
-
-### Prerequisites
-- macOS 15.0+ host
-- Xcode Command Line Tools (`xcode-select --install`)
-- `gh` CLI (for releases only)
-- `sips` + `iconutil` (preinstalled)
-
-### One-shot build (arm64)
+Xcode is optional. The recommended script uses the tools included with Xcode Command Line Tools.
 
 ```bash
 git clone https://github.com/AIPMAndy/andytici.git
 cd andytici/Textream
-./build_no_xcode.sh                 # arm64 only — fastest
+
+# Fast local build for Apple Silicon
+./build_no_xcode.sh
 open build/release/Andy题词.app
-```
 
-### Universal binary (arm64 + x86_64)
-
-```bash
+# Universal build for Apple Silicon + Intel
 ./build_no_xcode.sh --universal
-open build_universal/release/Andy题词.app
 ```
 
-Output: a fat `Mach-O` (verified via `lipo -info`: `Architectures in the fat file: x86_64 arm64`), an `.icns` compiled from `Assets.xcassets` via `iconutil`, and an ad-hoc `codesign --sign -`.
+Requirements:
 
-### Build pipeline (what the script does)
+- macOS 15 or later
+- Xcode Command Line Tools (`xcode-select --install`)
+- Xcode 16+ only if you prefer building through `Textream.xcodeproj`
 
-1. Compiles all 25 Swift sources with `swiftc -target arm64-apple-macos15.0`
-2. Hand-assembles `Contents/Info.plist`, `Contents/MacOS/`, `Contents/Resources/`
-3. Skips `Assets.car` (no `actool` without Xcode) — app uses the system icon, but `AppIcon.icns` is generated separately and bundled
-4. `codesign --force --sign - --timestamp=none` (ad-hoc, with entitlements so mic + network actually work)
-5. With `--universal`, repeats for `x86_64` and merges with `lipo -create`
+The command-line build compiles the Swift sources, assembles the app bundle, generates the icon and applies an ad-hoc signature. See [RELEASE.md](RELEASE.md) for the release checklist.
 
-For a deeper release runbook, see [RELEASE.md](RELEASE.md).
+<details>
+<summary><strong>Project map</strong></summary>
 
----
-
-## Project structure
-
-```
+```text
 andytici/
-├── README.md                    # This file (English)
-├── README.zh-CN.md              # Chinese
-├── LICENSE                       # MIT
-├── RELEASE.md                    # Maintainer runbook (no-Xcode build)
+├── README.md
+├── README.zh-CN.md
+├── RELEASE.md
 ├── Casks/
-│   └── andytici.rb               # Homebrew Cask formula
+│   └── andytici.rb
 ├── docs/
-│   ├── screenshots/
-│   │   ├── main-window.jpg       # Main editor view
-│   │   └── dock-with-new-logo.jpg
-│   └── superpowers/              # Original spec & implementation plan
-├── scripts/
-│   └── qa_script.andytici        # 60-90s Chinese sample script for QA
-└── Textream/                     # Swift sources + build artifacts
-    ├── Textream/                 # 25 Swift files (10,246 LoC)
-    │   ├── TextreamApp.swift
+│   └── screenshots/
+└── Textream/
+    ├── Textream/
     │   ├── ContentView.swift
     │   ├── SpeechRecognizer.swift
-    │   ├── PlatformPreset.swift  # 抖音/小红书/视频号/通用
     │   ├── MarqueeTextView.swift
     │   ├── NotchOverlayController.swift
     │   ├── ExternalDisplayController.swift
-    │   ├── TextreamService.swift
-    │   ├── … (17 more)
-    │   └── Assets.xcassets/      # 10 PNG sizes for AppIcon
-    ├── Textream.xcodeproj/        # Xcode project (for those who prefer GUI)
-    ├── TextreamTests/             # XCTest target (not run in CI)
-    ├── build_no_xcode.sh         # Command Line Tools build (recommended)
-    ├── build.sh                  # Legacy Xcode build script
-    └── build_universal/           # Universal output (gitignored)
+    │   ├── BrowserServer.swift
+    │   └── DirectorServer.swift
+    ├── TextreamTests/
+    ├── Textream.xcodeproj/
+    └── build_no_xcode.sh
 ```
 
----
+</details>
 
-## Roadmap
+## Current status
 
-| Version | Status | Focus |
-| --- | --- | --- |
-| v0.1.0 | ✅ Released | Core teleprompter + Chinese ASR + platform presets |
-| **v0.1.1** | ✅ **Current** | Full 中文 UI (NSAlert / 菜单 / Settings / Overlay), new logo, universal binary, no-Xcode build |
-| v0.2 | Planned | Script snippet library, multi-platform tone rewrites |
-| v0.3 | Planned | AI assist (Hook generation, emoji tag suggestions, voiceover polish) |
-| v1.0 | Planned | Cross-device: iPad / iPhone remote, Apple Watch page-turn, full Apple notarization |
+The latest public release is **v0.1.1**.
 
----
+| Area | Status |
+| --- | --- |
+| Apple Silicon | Built and used on real hardware |
+| Intel | Universal binary compiles; not yet tested on an Intel Mac |
+| Code signing | Ad-hoc signed; Apple notarization is not yet enabled |
+| External display | Implemented; physical second-monitor coverage is still limited |
+| Automated tests | XCTest sources exist; no CI runner is configured yet |
 
-## Known limitations
-
-These are honestly listed in the [release acceptance doc](V0.1.1_RC2_ACCEPTANCE.md) — none are blockers for personal use:
-
-- **Ad-hoc signed** — other users must right-click → Open the first time. Apple Developer ID notarization requires the $99/yr Apple Developer Program, which the maintainer hasn't enrolled in.
-- **Intel Mac not machine-tested** — the universal binary is verified via `lipo` and `swiftc -target x86_64-apple-macos15.0`, but only Apple Silicon hardware is available for end-to-end testing.
-- **External display mode** — code is in place but not tested against a physical second monitor (no monitor available on the test machine).
-- **Director mode (跨设备遥控)** — code path exists, but no real iOS device was available for cross-device testing.
-- **CI test suite** — `TextreamTests` exists but isn't run in CI (requires Xcode test runner, which the maintainer doesn't have installed).
-
----
+These limits are documented openly so users know what has and has not been verified.
 
 ## Contributing
 
-Issues and PRs welcome. For substantial changes, please open an issue first to discuss scope.
+Issues and focused pull requests are welcome. For larger changes, open an issue first so the scope can be agreed before implementation.
 
-**Build prerequisites** — macOS host. Apple Silicon strongly preferred (Intel builds work but aren't machine-tested).
-
-**Code style** — match the existing files: SwiftUI for views, `@MainActor` for UI entry points, MVVM-ish separation. Keep the Chinese-first UI strings in `Localizable.strings` (when added) rather than hard-coded.
-
----
+Please follow the existing SwiftUI structure, keep user-facing copy Chinese-first and avoid adding cloud dependencies to the core reading flow.
 
 ## License
 
-[MIT](LICENSE).
+Andy题词 is available under the [MIT License](LICENSE).
+
+<p align="center">
+  <sub>Made for creators who would rather look at the camera than chase a scrolling script.</sub>
+</p>
