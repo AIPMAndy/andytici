@@ -705,6 +705,19 @@ class SpeechRecognizer {
                         self.retryCount = 0 // Reset on success
                         self.lastSpokenText = spoken
                         self.matchCharacters(spoken: spoken)
+                        // A recognition task can finish normally after a pause
+                        // or an internal segmentation boundary without emitting
+                        // an error. Keeping the audio engine alive in that state
+                        // makes the UI look like it is still listening even
+                        // though no more partial results will arrive. Continue
+                        // immediately from the current text position instead of
+                        // waiting for the 55-second watchdog.
+                        if result.isFinal,
+                           self.shouldListen,
+                           !self.shouldDismiss,
+                           self.recognizedCharCount < self.sourceTextCharCount {
+                            self.restartTask()
+                        }
                     }
                 }
                 if let error {
@@ -932,6 +945,15 @@ class SpeechRecognizer {
                     self.retryCount = 0
                     self.lastSpokenText = spoken
                     self.matchCharacters(spoken: spoken)
+                    // Normal task completion is not guaranteed to include an
+                    // error. Without an explicit restart the microphone stays
+                    // hot while word tracking silently stops mid-script.
+                    if result.isFinal,
+                       self.shouldListen,
+                       !self.shouldDismiss,
+                       self.recognizedCharCount < self.sourceTextCharCount {
+                        self.restartTask()
+                    }
                 }
             }
             if let error {
@@ -975,10 +997,14 @@ class SpeechRecognizer {
 
     private func startPreemptiveTimer() {
         preemptiveRestartTimer?.invalidate()
-        preemptiveRestartTimer = Timer.scheduledTimer(withTimeInterval: 55.0, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 55.0, repeats: true) { [weak self] _ in
             guard let self, self.isListening, !self.sourceText.isEmpty else { return }
             self.restartTask()
         }
+        // Default-mode timers pause while macOS is tracking scroll/drag events.
+        // The watchdog must keep running during teleprompter interaction.
+        RunLoop.main.add(timer, forMode: .common)
+        preemptiveRestartTimer = timer
     }
 
     private func stopPreemptiveTimer() {

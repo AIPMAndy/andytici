@@ -75,7 +75,7 @@ stub_sources() {
 ARCH_BINARIES=()
 for ARCH in "${ARCHES[@]}"; do
   echo ""
-  echo "🔨 Compiling $(ls Textream/*.swift | wc -l | xargs) Swift sources for $ARCH…"
+  echo "🔨 Compiling $(ls Textream/*.swift | wc -l | xargs) Swift sources for ${ARCH}…"
   TMP_SRC_DIR="$(pwd)/.build/swift_sources_$ARCH"
   stub_sources "$TMP_SRC_DIR"
   SWIFT_SOURCES=("$TMP_SRC_DIR"/*.swift)
