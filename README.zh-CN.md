@@ -2,18 +2,12 @@
   <img src="Textream/Textream/Assets.xcassets/AppIcon.appiconset/icon_128x128@2x.png" width="112" alt="Andy题词 App 图标">
 </p>
 
+
 <h1 align="center">Andy题词</h1>
 
 <p align="center">
-  <strong>会听你说话的提词器。</strong><br>
-  为抖音、小红书、视频号中文口播创作者打造的 macOS 原生工作台。
-</p>
-
-<p align="center">
-  <a href="https://github.com/AIPMAndy/andytici/releases"><img src="https://img.shields.io/github/v/release/AIPMAndy/andytici?style=flat&label=release&color=F5C542" alt="最新版本"></a>
-  <img src="https://img.shields.io/badge/macOS-15%2B-111111?style=flat&logo=apple&logoColor=white" alt="需要 macOS 15 或更高版本">
-  <img src="https://img.shields.io/badge/Apple%20Silicon%20%2B%20Intel-universal-111111?style=flat" alt="通用架构">
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/AIPMAndy/andytici?style=flat&color=111111" alt="MIT 许可证"></a>
+  <strong>会听你读稿的提词器。</strong><br>
+  中文口播创作者的 macOS 原生工作台 —— 一边写脚本，一边听你说话，稿子的高亮跟着声音走。
 </p>
 
 <p align="center">
@@ -24,77 +18,92 @@
   <a href="https://github.com/AIPMAndy/andytici/issues">提交反馈</a>
 </p>
 
+<p align="center">
+  <a href="https://github.com/AIPMAndy/andytici/releases"><img src="https://img.shields.io/github/v/release/AIPMAndy/andytici?style=flat&label=release&color=F5C542" alt="最新版本"></a>
+  <img src="https://img.shields.io/badge/macOS-15%2B-111111?style=flat&logo=apple&logoColor=white" alt="macOS 15 或更高版本">
+  <img src="https://img.shields.io/badge/license-MIT-111111?style=flat" alt="MIT 许可证">
+</p>
+
 <br>
 
 <p align="center">
-  <img src="docs/screenshots/andy-tici-main.png" width="100%" alt="Andy题词中文口播稿编辑界面">
+  <img src="docs/screenshots/hero-editor.png" width="100%" alt="Andy题词 主编辑界面，载入了一篇中文口播稿">
 </p>
 
-<p align="center"><sub>写稿、分段、排练和提词，都在同一个创作流程里完成。</sub></p>
+<p align="center"><sub>一个窗口写稿，一个窗口出镜，应用在中间把两边连起来。</sub></p>
 
 ---
 
-## 跟着你，不催着你
+## 为什么要「会听」
 
-普通提词器按照固定速度滚动：说快了跟不上，停下来想一想，稿子却已经跑远。
+普通提词器按时间轴滚动。说快了，高亮跑在声音前面三行；停下来想一下，稿子又从眼前溜走。创作者最后变成了读屏幕，而不是看镜头。
 
-Andy题词会听你读到哪里，让高亮跟着声音走。你可以暂停、重说一句，甚至临场换个表达，不必追赶屏幕。眼睛更接近镜头，口播也更自然。
+Andy题词不靠计时器。它用系统自带的中文语音识别听你读完一段，把高亮拖到你**真正念到的那个词**。你临时改词、停顿、跳过一段，稿子都在等你，眼睛可以一直在镜头附近，语感也保持自然。
 
-| | |
-| --- | --- |
-| **🎙 跟随声音高亮**<br>中文语音识别定位当前词，不靠计时器猜测朗读进度。 | **🧠 中文口播词库**<br>把点赞、关注、扣1、上链接等高频词作为识别上下文，提高创作者场景的匹配能力。 |
-| **🖥 适配拍摄场景**<br>支持主窗口、悬浮提词、MacBook 刘海区域和外接显示器。 | **🔒 本地优先**<br>无需注册账号，也没有遥测；脚本以便携的 `.andytici` 文档保存在本机。 |
+## 实际用起来什么样
 
-## 三步开始口播
+下面三张图都是从真实运行的版本截下来的，没有渲染图。
 
-1. **粘贴或打开脚本**：长稿可以拆成多页，并为停顿、重点和金句加入视觉标记。
-2. **调整提词方式**：设置字体、宽度、位置、滚动方式和显示模式。
-3. **开始自然朗读**：当前内容持续高亮，Andy题词根据你的声音推进。
+**载入脚本后的主编辑界面。** 左侧是页面侧栏，中间是正文编辑器，控制条贴在底部。编辑器里是一段短口播稿，emoji 标记和金色高亮都标在你想要突出的句子上。
 
-## 为中文创作者而生
+<img src="docs/screenshots/hero-editor.png" width="100%" alt="Andy题词 主编辑界面，已经载入了一篇口播稿">
 
-- **中文优先识别**：支持调整识别语言，并加入常用口播词作为上下文
-- **多页脚本管理**：使用轻量的 `.andytici` 格式保存和分享
-- **Hook 模板与提示标记**：快速插入开场结构、重点、停顿和金句
-- **刘海、悬浮与外接屏模式**：适配不同镜头和拍摄设备
-- **局域网浏览与导演模式**：让同一网络中的另一台设备查看或控制进度
-- **macOS 服务与 URL Scheme**：从快捷指令、Raycast、Alfred 或其他应用发送文稿
+**第一次打开时的空状态。** ⌘V 从剪贴板粘贴、⌘O 打开本地脚本、或者直接把 `.pptx` 拖进窗口。底下金色的提示告诉你 —— 不确定怎么开头时，可以试试「金句」模板。
 
-### 自动化调用
+<img src="docs/screenshots/quick-start.png" width="100%" alt="Andy题词 空状态，提供粘贴 / 打开 / PPTX 拖入三个入口">
+
+**设置面板 —— 高亮看不看得清，全靠这里调。** 一共六个 tab，下面这张是「外观」：字体、字号、当前词的高亮色、下一句的提示色，每行六个色块，深色浅色背景都覆盖。
+
+<img src="docs/screenshots/settings.png" width="100%" alt="Andy题词 设置面板的外观 tab，可以调字体字号和颜色">
+
+---
+
+## 为中文创作者做的取舍
+
+Andy题词的功能设计都围绕中文口播的实际情况：短 Hook、emoji 提示、重复的引导话术、稿子本来就是要念出来的，不是用来默读的。
+
+- **中文优先识别**：用系统 locale 跑识别，同时喂一个小型创作者词库（`KouboVocabulary.swift`）—— 点赞、关注、扣 1、上链接 —— 让高频口播词不会因为不在通用词典里就被听错。
+- **Hook 模板与提示标记**：工具栏一键插入 Hook 模板、引导关注块、emoji 项目符号和三种常用「金句」句式。`ScriptTag.swift` 把强调、停顿、金句这些标记在提词浮窗里用不同颜色画出来。
+- **多页脚本**：长稿可以拆页，侧栏能拖动排序、改名、跳转。整本脚本保存成可移植的 `.andytici` 包，方便在不同机器之间搬运。
+- **对着镜头都能用的版式**：主窗口编辑器、悬浮浮窗（`FloatingOverlayView`）、MacBook 刘海覆盖（`NotchOverlayController`）、外接显示器独占渲染（`ExternalDisplayController`）。挑一个把稿子放在离镜头最近的位置。
+- **局域网浏览与导演模式**：打开 `BrowserServer`，同 Wi-Fi 下的另一台设备可以用手机大小的视图跟着看；打开 `DirectorServer`，手机可以远程暂停、跳转、翻页。
+- **macOS 服务与 URL Scheme**：在「快捷指令」、Raycast、Alfred 或者任何 app 里选中文字，通过 Services 菜单或者 `andytici://read?text=...` 直接推过来。多行内容记得 URL 编码 `text=` 后面的部分。
+
+### URL Scheme 怎么用
 
 ```text
-andytici://read?text=今天我们聊一聊...
+andytici://read?text=%E4%BB%8A%E5%A4%A9%E6%88%91%E4%BB%AC%E8%81%8A%E4%B8%80%E8%81%8A%E5%BC%80%E5%A4%A7%E5%B8%88%E7%9A%84%E6%96%B0%E4%B9%A6
 ```
 
-传入多行文稿时，请先对 `text=` 后面的内容进行 URL 编码。
+处理逻辑在 `TextreamService.swift`：打开 Andy题词、把编码后的文本灌进新页面、起提词浮窗。
 
 ---
 
 ## 安装
 
-前往 [GitHub Releases](https://github.com/AIPMAndy/andytici/releases/latest) 下载最新磁盘镜像，打开后将 **Andy题词.app** 拖入 `/Applications`。
+去 [GitHub Releases](https://github.com/AIPMAndy/andytici/releases/latest) 下载最新的 dmg，打开之后把 **Andy题词.app** 拖进 `/Applications` 就行。
 
-当前版本使用 ad-hoc 签名，macOS 首次启动时可能需要手动确认：
+当前 release 用的是 ad-hoc 签名。第一次启动 Gatekeeper 会问：
 
-1. 在 Finder 中右键点击 **Andy题词.app**，选择 **打开**。
-2. 再次确认 **打开**。
-3. 需要语音跟随时，允许麦克风与语音识别权限。
+1. 在 Finder 里右键点 **Andy题词.app**，选 **打开**。
+2. 再确认一次 **打开**。
+3. 打开「跟着声音走」模式时，会请求麦克风和语音识别权限。
 
-上述安全确认通常只需要完成一次。
+这三个确认只需要一次，之后就能正常启动。
 
 ## 从源码构建
 
-不安装完整 Xcode 也可以构建，推荐脚本只依赖 Xcode Command Line Tools。
+不用装完整的 Xcode，脚本只依赖 Xcode Command Line Tools。
 
 ```bash
 git clone https://github.com/AIPMAndy/andytici.git
 cd andytici/Textream
 
-# Apple Silicon 本机构建，速度最快
+# Apple Silicon 本机构建 —— 日常开发用，最快
 ./build_no_xcode.sh
 open build/release/Andy题词.app
 
-# Apple Silicon + Intel 通用构建
+# 通用构建 —— 发布用的胖二进制
 ./build_no_xcode.sh --universal
 ```
 
@@ -102,9 +111,9 @@ open build/release/Andy题词.app
 
 - macOS 15 或更高版本
 - Xcode Command Line Tools（`xcode-select --install`）
-- 只有通过 `Textream.xcodeproj` 构建时才需要 Xcode 16+
+- 只有用 `Textream.xcodeproj` 打开时才需要 Xcode 16+
 
-命令行脚本会编译 Swift 源码、组装 App Bundle、生成图标并完成 ad-hoc 签名。发布流程见 [RELEASE.md](RELEASE.md)。
+脚本会编译 Swift 源文件、组装 App Bundle、重新生成图标、做 ad-hoc 签名。发布流程的细节写在 [RELEASE.md](RELEASE.md)。
 
 <details>
 <summary><strong>项目结构</strong></summary>
@@ -114,19 +123,24 @@ andytici/
 ├── README.md
 ├── README.zh-CN.md
 ├── RELEASE.md
-├── Casks/
-│   └── andytici.rb
-├── docs/
-│   └── screenshots/
+├── Casks/andytici.rb
+├── docs/screenshots/
 └── Textream/
     ├── Textream/
-    │   ├── ContentView.swift
-    │   ├── SpeechRecognizer.swift
-    │   ├── MarqueeTextView.swift
-    │   ├── NotchOverlayController.swift
+    │   ├── ContentView.swift              # 主编辑器 + 侧栏
+    │   ├── WelcomeView.swift              # 三步首次启动引导
+    │   ├── SettingsView.swift             # 六 tab 设置
+    │   ├── SpeechRecognizer.swift         # 声音跟随引擎
+    │   ├── SpeechTextAlignment.swift      # 读到的词 → 脚本位置
+    │   ├── NotchOverlayController.swift   # MacBook 刘海浮窗
     │   ├── ExternalDisplayController.swift
-    │   ├── BrowserServer.swift
-    │   └── DirectorServer.swift
+    │   ├── BrowserServer.swift            # 局域网只读视图
+    │   ├── DirectorServer.swift           # 局域网远程控制
+    │   ├── TextreamService.swift          # URL Scheme 处理
+    │   ├── HookTemplate.swift             # 开场结构模板
+    │   ├── ScriptTag.swift                # 内联标记
+    │   ├── KouboVocabulary.swift          # 创作者识别词表
+    │   └── PlatformPreset.swift           # 抖音 / 小红书 / 视频号预设
     ├── TextreamTests/
     ├── Textream.xcodeproj/
     └── build_no_xcode.sh
@@ -134,29 +148,32 @@ andytici/
 
 </details>
 
-## 当前状态
+---
 
-最新公开版本为 **v0.1.1**。
+## 哪些是真的验证过的
+
+这一节老实交代「已经在实机上跑过」和「只是能编译但没真测过」的边界。列表里没写的，就当作未验证。
 
 | 项目 | 状态 |
 | --- | --- |
-| Apple Silicon | 已在真实设备构建和日常使用 |
-| Intel | 通用二进制可编译，尚未在 Intel Mac 实机验证 |
-| 代码签名 | 当前为 ad-hoc 签名，尚未启用 Apple 公证 |
-| 外接显示器 | 功能已实现，真实副屏覆盖仍有限 |
-| 自动化测试 | 已有 XCTest 源文件，暂未配置 CI 执行环境 |
+| Apple Silicon（arm64）| 在实机上日常构建与使用 |
+| Intel（x86_64）| 通用二进制能编译，但还没在 Intel Mac 上跑过 |
+| 代码签名 | ad-hoc 签名，没启用 Apple 公证 |
+| 外接显示器模式 | 已实现，只在一台物理副屏上测过 |
+| 自动化测试 | XCTest 源文件已存在（`TextreamTests/`），还没配 CI 执行环境 |
+| 声音跟随准确率 | 在安静房间 + 真实脚本下可用；嘈杂环境下的表现还没量化 |
 
-这里明确区分已经验证和仍待验证的能力，方便使用者判断当前边界。
+边界写在这里方便使用者判断这个版本对自己的场景够不够。
 
 ## 参与贡献
 
-欢迎提交 Issue 和范围明确的 Pull Request。较大改动建议先开 Issue 对齐目标，再开始实现。
+欢迎提 Issue 和范围明确的 Pull Request。比较大的改动 —— 新版式、新模式、新识别后端 —— 建议先开 Issue 对齐范围，再动代码。
 
-请沿用现有 SwiftUI 结构，保持用户界面中文优先，并避免让核心提词流程依赖云端服务。
+请沿用现有的 SwiftUI 结构，保留用户界面中文优先的原则，避免给核心提词流程加云端依赖。Andy题词 的核心承诺就是脚本和识别都留在本机。
 
 ## 许可证
 
-Andy题词采用 [MIT License](LICENSE) 开源。
+Andy题词 采用 [MIT License](LICENSE) 开源。
 
 <p align="center">
   <sub>把眼睛留给镜头，把滚动交给 Andy题词。</sub>

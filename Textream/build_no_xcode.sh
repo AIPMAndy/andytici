@@ -1,5 +1,5 @@
 #!/bin/bash
-# No-Xcode build for Andy题词 (v0.1.1 RC)
+# No-Xcode build for Andy题词 (v0.1.2)
 # - swiftc directly compiles all 25 Swift sources into a single binary
 # - Hand-assembles Contents/Info.plist (merging GENERATE_INFOPLIST_FILE fields)
 # - Skips Assets.car (actool unavailable without Xcode → app launches with system icon)
@@ -29,8 +29,8 @@ cd "$TEXTREAM_DIR"
 
 APP_NAME="Andy题词"
 BUNDLE_ID="dev.andy.tici"
-VERSION="0.1.1"
-BUILD_NUM="2"
+VERSION="0.1.2"
+BUILD_NUM="3"
 DEPLOY_TARGET="15.0"
 DEVELOPER_TEAM="RJA7656U34"
 
