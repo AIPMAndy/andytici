@@ -9,6 +9,55 @@ import AppKit
 import SwiftUI
 import Combine
 
+/// AppKit may resize an `NSHostingView`-backed borderless panel to the SwiftUI
+/// root view's unconstrained fitting size. For the pinned teleprompter that can
+/// turn a notch-sized panel into a screen-sized transparent input layer. Keep
+/// the pinned panel physically anchored to the selected screen's top centre and
+/// constrain every AppKit frame update to the dimensions owned by the controller.
+private final class PinnedNotchPanel: NSPanel {
+    var anchorScreenFrame: NSRect = .zero
+    var allowedWidth: ClosedRange<CGFloat> = NotchSettings.minWidth...NotchSettings.maxWidth
+    var allowedHeight: ClosedRange<CGFloat> = 0...NotchSettings.maxHeight
+
+    private func lockedFrame(for frameRect: NSRect) -> NSRect {
+        let width = min(max(frameRect.width, allowedWidth.lowerBound), allowedWidth.upperBound)
+        let height = min(max(frameRect.height, allowedHeight.lowerBound), allowedHeight.upperBound)
+        return NSRect(
+            x: anchorScreenFrame.midX - width / 2,
+            y: anchorScreenFrame.maxY - height,
+            width: width,
+            height: height
+        )
+    }
+
+    override func setFrame(_ frameRect: NSRect, display flag: Bool) {
+        guard !anchorScreenFrame.isEmpty else {
+            super.setFrame(frameRect, display: flag)
+            return
+        }
+        super.setFrame(lockedFrame(for: frameRect), display: flag)
+    }
+
+    override func setFrame(_ frameRect: NSRect, display flag: Bool, animate animateFlag: Bool) {
+        guard !anchorScreenFrame.isEmpty else {
+            super.setFrame(frameRect, display: flag, animate: animateFlag)
+            return
+        }
+        super.setFrame(lockedFrame(for: frameRect), display: flag, animate: animateFlag)
+    }
+
+    override func setContentSize(_ size: NSSize) {
+        guard !anchorScreenFrame.isEmpty else {
+            super.setContentSize(size)
+            return
+        }
+        super.setFrame(
+            lockedFrame(for: NSRect(origin: frame.origin, size: size)),
+            display: false
+        )
+    }
+}
+
 @Observable
 class NotchFrameTracker {
     var visibleHeight: CGFloat = 37 {
@@ -26,12 +75,15 @@ class NotchFrameTracker {
     @ObservationIgnored var screenMidX: CGFloat = 0
     @ObservationIgnored var screenMaxY: CGFloat = 0
     @ObservationIgnored var menuBarHeight: CGFloat = 0
+    @ObservationIgnored var maximumHeight: CGFloat = NotchSettings.maxHeight
 
     func updatePanel() {
         guard let panel else { return }
-        let x = screenMidX - visibleWidth / 2
-        let y = screenMaxY - visibleHeight
-        panel.setFrame(NSRect(x: x, y: y, width: visibleWidth, height: visibleHeight), display: false)
+        let safeWidth = min(max(visibleWidth, NotchSettings.minWidth), NotchSettings.maxWidth)
+        let safeHeight = min(max(visibleHeight, menuBarHeight), maximumHeight)
+        let x = screenMidX - safeWidth / 2
+        let y = screenMaxY - safeHeight
+        panel.setFrame(NSRect(x: x, y: y, width: safeWidth, height: safeHeight), display: false)
     }
 
     // R94: batched frame write. The per-property didSets above each call
@@ -169,6 +221,7 @@ class NotchOverlayController: NSObject {
     private var lastMouseLocation: CGPoint?
     private var stopButtonPanel: NSPanel?
     private var escMonitor: Any?
+    private var globalEscMonitor: Any?
 
     func show(
         text: String,
@@ -200,9 +253,18 @@ class NotchOverlayController: NSObject {
         let screen: NSScreen
         switch settings.notchDisplayMode {
         case .followMouse:
-            screen = screenUnderMouse() ?? NSScreen.main ?? NSScreen.screens[0]
+            // A pinned teleprompter is designed for eye contact with the camera.
+            // Prefer the physical notch display even when the pointer happens to
+            // be on an external monitor when prompting starts.
+            screen = Self.notchedScreen(in: NSScreen.screens)
+                ?? screenUnderMouse()
+                ?? NSScreen.main
+                ?? NSScreen.screens[0]
         case .fixedDisplay:
-            screen = NSScreen.screens.first(where: { $0.displayID == settings.pinnedScreenID }) ?? NSScreen.main ?? NSScreen.screens[0]
+            screen = NSScreen.screens.first(where: { $0.displayID == settings.pinnedScreenID })
+                ?? Self.notchedScreen(in: NSScreen.screens)
+                ?? NSScreen.main
+                ?? NSScreen.screens[0]
         }
 
         let screenFrame = screen.frame
@@ -229,10 +291,10 @@ class NotchOverlayController: NSObject {
             }
         }
 
-        // Show floating stop button only in follow-cursor mode (panel ignores mouse events)
-        if settings.overlayMode == .floating && settings.followCursorWhenUndocked {
-            showStopButton(on: screen)
-        }
+        // Keep an unmistakable emergency exit above every prompting mode.
+        // It lives in its own panel so it remains clickable even if the main
+        // overlay ever renders at an unexpected size.
+        showStopButton(on: screen)
 
         // Word tracking & silence-paused need the microphone; classic does not
         if settings.listeningMode != .classic {
@@ -242,6 +304,16 @@ class NotchOverlayController: NSObject {
 
     private func screenUnderMouse() -> NSScreen? {
         screenUnderMouse(mouseLocation: NSEvent.mouseLocation)
+    }
+
+    private static func notchedScreen(in screens: [NSScreen]) -> NSScreen? {
+        screens.first(where: isNotchedScreen)
+    }
+
+    private static func isNotchedScreen(_ screen: NSScreen) -> Bool {
+        guard let left = screen.auxiliaryTopLeftArea,
+              let right = screen.auxiliaryTopRightArea else { return false }
+        return right.minX > left.maxX
     }
 
     // R59: callers that have already read NSEvent.mouseLocation pass the value
@@ -341,8 +413,8 @@ class NotchOverlayController: NSObject {
     }
 
     private func showPinned(settings: NotchSettings, screen: NSScreen) {
-        let notchWidth = settings.notchWidth
-        let textAreaHeight = settings.textAreaHeight
+        let notchWidth = min(max(settings.notchWidth, NotchSettings.minWidth), NotchSettings.maxWidth)
+        let textAreaHeight = min(max(settings.textAreaHeight, NotchSettings.minHeight), NotchSettings.maxHeight)
         let maxExtraHeight: CGFloat = 350
         let screenFrame = screen.frame
         let visibleFrame = screen.visibleFrame
@@ -354,6 +426,7 @@ class NotchOverlayController: NSObject {
         tracker.screenMidX = screenFrame.midX
         tracker.screenMaxY = screenFrame.maxY
         tracker.menuBarHeight = menuBarHeight
+        tracker.maximumHeight = menuBarHeight + textAreaHeight + maxExtraHeight
         // Set full expanded dimensions so mouse tracking uses the correct size.
         // R94: batched single IPC instead of two (visibleHeight then visibleWidth
         // didSets would each call updatePanel independently).
@@ -366,17 +439,33 @@ class NotchOverlayController: NSObject {
 
         let overlayView = NotchOverlayView(content: overlayContent, speechRecognizer: speechRecognizer, menuBarHeight: menuBarHeight, baseTextHeight: textAreaHeight, maxExtraHeight: maxExtraHeight, frameTracker: tracker)
         let contentView = NSHostingView(rootView: overlayView)
+        // A GeometryReader has no intrinsic ideal size. On newer macOS versions,
+        // NSHostingView's default sizing options can propagate the screen-sized
+        // proposal back to its window and turn this small borderless panel into
+        // a full-screen black panel. The controller owns the panel geometry, so
+        // SwiftUI must only render inside the frame it is given.
+        contentView.sizingOptions = []
 
         // Start panel at full target size (SwiftUI animates the notch shape inside)
         let targetHeight = menuBarHeight + textAreaHeight
         let targetY = screenFrame.maxY - targetHeight
         let xPosition = screenFrame.midX - notchWidth / 2
-        let panel = NSPanel(
-            contentRect: NSRect(x: xPosition, y: targetY, width: notchWidth, height: targetHeight),
+        let targetFrame = NSRect(x: xPosition, y: targetY, width: notchWidth, height: targetHeight)
+        let panel = PinnedNotchPanel(
+            contentRect: targetFrame,
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
+        panel.anchorScreenFrame = screenFrame
+        panel.allowedHeight = menuBarHeight...(menuBarHeight + textAreaHeight + maxExtraHeight)
+        panel.minSize = NSSize(width: NotchSettings.minWidth, height: menuBarHeight)
+        panel.maxSize = NSSize(
+            width: NotchSettings.maxWidth,
+            height: menuBarHeight + textAreaHeight + maxExtraHeight
+        )
+        panel.contentMinSize = panel.minSize
+        panel.contentMaxSize = panel.maxSize
         tracker.panel = panel
 
         panel.isOpaque = false
@@ -386,13 +475,16 @@ class NotchOverlayController: NSObject {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.ignoresMouseEvents = false
         panel.sharingType = NotchSettings.shared.hideFromScreenShare ? .none : .readOnly
+        contentView.frame = NSRect(origin: .zero, size: targetFrame.size)
+        contentView.autoresizingMask = [.width, .height]
         panel.contentView = contentView
+        panel.setFrame(targetFrame, display: false)
 
         panel.orderFrontRegardless()
         self.panel = panel
 
         // Start mouse tracking for follow-mouse mode
-        if settings.notchDisplayMode == .followMouse {
+        if settings.notchDisplayMode == .followMouse && !Self.isNotchedScreen(screen) {
             startMouseTracking()
         }
 
@@ -418,6 +510,7 @@ class NotchOverlayController: NSObject {
             followingCursor: true
         )
         let contentView = NSHostingView(rootView: floatingView)
+        contentView.sizingOptions = []
 
         let panel = NSPanel(
             contentRect: initialFrame,
@@ -450,6 +543,7 @@ class NotchOverlayController: NSObject {
             mirrorAxis: nil
         )
         let contentView = NSHostingView(rootView: fullscreenView)
+        contentView.sizingOptions = []
 
         let panel = NSPanel(
             contentRect: screenFrame,
@@ -485,6 +579,7 @@ class NotchOverlayController: NSObject {
             baseHeight: panelHeight
         )
         let contentView = NSHostingView(rootView: floatingView)
+        contentView.sizingOptions = []
 
         let panel = NSPanel(
             contentRect: NSRect(x: xPosition, y: yPosition, width: panelWidth, height: panelHeight),
@@ -556,6 +651,21 @@ class NotchOverlayController: NSObject {
                 return nil
             }
             return event
+        }
+        // The overlay is a non-activating panel. Once the user clicks another
+        // app, a local monitor no longer sees Escape, so provide a global
+        // emergency exit as well. The global monitor observes but does not
+        // consume the key event.
+        globalEscMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 53 else { return }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if self.overlayContent.showPagePicker {
+                    self.overlayContent.showPagePicker = false
+                } else {
+                    self.dismiss()
+                }
+            }
         }
     }
 
@@ -681,20 +791,20 @@ class NotchOverlayController: NSObject {
     private func showStopButton(on screen: NSScreen) {
         guard stopButtonPanel == nil else { return }
 
-        let buttonSize: CGFloat = 36
-        let margin: CGFloat = 8
-        let screenFrame = screen.frame
+        let buttonWidth: CGFloat = 116
+        let buttonHeight: CGFloat = 44
+        let margin: CGFloat = 16
         let visibleFrame = screen.visibleFrame
-        let menuBarBottom = visibleFrame.maxY
-        let x = screenFrame.midX - buttonSize / 2
-        let y = menuBarBottom - buttonSize - margin
+        let x = visibleFrame.maxX - buttonWidth - margin
+        let y = visibleFrame.maxY - buttonHeight - margin
 
         let stopView = NSHostingView(rootView: StopButtonView {
             self.dismiss()
         })
+        stopView.sizingOptions = []
 
         let panel = NSPanel(
-            contentRect: NSRect(x: x, y: y, width: buttonSize, height: buttonSize),
+            contentRect: NSRect(x: x, y: y, width: buttonWidth, height: buttonHeight),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -702,7 +812,7 @@ class NotchOverlayController: NSObject {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
-        panel.level = .screenSaver
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.ignoresMouseEvents = false
         panel.sharingType = .none
@@ -721,6 +831,10 @@ class NotchOverlayController: NSObject {
             NSEvent.removeMonitor(escMonitor)
         }
         escMonitor = nil
+        if let globalEscMonitor {
+            NSEvent.removeMonitor(globalEscMonitor)
+        }
+        globalEscMonitor = nil
     }
 }
 
@@ -731,14 +845,19 @@ struct StopButtonView: View {
 
     var body: some View {
         Button(action: onStop) {
-            Image(systemName: "stop.fill")
+            Label("退出提词", systemImage: "xmark")
                 .font(.system(size: 14, weight: .bold))
                 .foregroundStyle(.white)
-                .frame(width: 36, height: 36)
-                .background(.red.opacity(0.85))
-                .clipShape(Circle())
+                .frame(width: 112, height: 40)
+                .background(.red)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(.white.opacity(0.35), lineWidth: 1)
+                }
         }
         .buttonStyle(.plain)
+        .help("退出提词")
     }
 }
 
@@ -935,12 +1054,14 @@ struct NotchOverlayView: View {
         let autoNext = NotchSettings.shared.autoNextPage
         let isTransparent = NotchSettings.shared.overlayTransparency
         let transparencyOpacity = NotchSettings.shared.overlayTransparencyOpacity
-        return GeometryReader { geo in
-            let targetHeight = menuBarHeight + baseTextHeight + extraHeight
-            let currentHeight = notchHeight + (targetHeight - notchHeight) * expansion
-            let currentWidth = notchWidth + (geo.size.width - notchWidth) * expansion
-
-            ZStack(alignment: .top) {
+        let targetWidth = min(
+            max(NotchSettings.shared.notchWidth, NotchSettings.minWidth),
+            NotchSettings.maxWidth
+        )
+        let targetHeight = menuBarHeight + baseTextHeight + extraHeight
+        let currentHeight = notchHeight + (targetHeight - notchHeight) * expansion
+        let currentWidth = notchWidth + (targetWidth - notchWidth) * expansion
+        return ZStack(alignment: .top) {
                 // Container shape — solid black or transparent with blur
                 // R74: served from body-cached `isTransparent` and
                 // `transparencyOpacity`. The previous GeometryReader
@@ -1001,8 +1122,14 @@ struct NotchOverlayView: View {
                 }
             }
             .frame(width: currentWidth, height: currentHeight, alignment: .top)
-            .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
-        }
+        // A root GeometryReader advertises an unconstrained fitting size to
+        // NSHostingView. In a borderless panel AppKit can interpret that as the
+        // whole screen, which made the 20 pt teleprompter text look enormous.
+        // The controller already owns the exact panel dimensions, so publish a
+        // finite SwiftUI root size and let transparent margins contain the
+        // collapsed-notch animation.
+        .frame(width: targetWidth, height: targetHeight, alignment: .top)
+        .clipped()
         .onChange(of: extraHeight) { _, _ in updateFrameTracker() }
         .onAppear {
             // Phase 1: Expand container with smooth easing
@@ -1975,7 +2102,7 @@ struct FloatingOverlayView: View {
                             .foregroundStyle(.white)
                             .padding(.horizontal, 20)
                             .padding(.vertical, 10)
-                            .background(Color.accentColor)
+                            .background(Color.andyGold)
                             .clipShape(Capsule())
                         }
                         .buttonStyle(.plain)
