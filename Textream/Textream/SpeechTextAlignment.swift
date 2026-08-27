@@ -1,5 +1,91 @@
 import Foundation
 
+enum SpeechContextHints {
+    private static let maximumCJKPhraseLength = 12
+
+    /// Builds phrases for Apple's speech recognizer from the normalized source.
+    /// Andy题词 inserts spaces between CJK display tokens, so treating every space
+    /// as a word boundary leaves Chinese scripts with no usable contextual hints.
+    static func upcoming(
+        in characters: [Character],
+        from startOffset: Int,
+        lookaheadCharacters: Int = 1500
+    ) -> [String] {
+        let start = max(0, min(startOffset, characters.count))
+        let length = max(0, lookaheadCharacters)
+        let end = min(start + length, characters.count)
+        guard start < end else { return [] }
+
+        var hints: [String] = []
+        hints.reserveCapacity(32)
+        var cjkPhrase = ""
+        var latinWord = ""
+
+        func flushLatinWord() {
+            if latinWord.count >= 5 {
+                hints.append(latinWord)
+            }
+            latinWord.removeAll(keepingCapacity: true)
+        }
+
+        func flushCJKPhrase() {
+            if cjkPhrase.count >= 2 {
+                hints.append(cjkPhrase)
+            }
+            cjkPhrase.removeAll(keepingCapacity: true)
+        }
+
+        for index in start..<end {
+            let character = characters[index]
+            if isCJK(character) {
+                flushLatinWord()
+                cjkPhrase.append(character)
+                if cjkPhrase.count == maximumCJKPhraseLength {
+                    flushCJKPhrase()
+                }
+            } else if character.isLetter || character.isNumber {
+                flushCJKPhrase()
+                latinWord.append(character)
+            } else if character.isWhitespace {
+                // Spaces between Chinese display tokens are synthetic. Preserve
+                // the CJK phrase while still ending ordinary Latin words.
+                flushLatinWord()
+            } else {
+                flushLatinWord()
+                flushCJKPhrase()
+            }
+        }
+        flushLatinWord()
+        flushCJKPhrase()
+        return hints
+    }
+
+    /// Stable deduplication keeps nearby script phrases ahead of generic terms.
+    static func merging(_ primary: [String], _ fallback: [String], limit: Int) -> [String] {
+        guard limit > 0 else { return [] }
+        var seen = Set<String>()
+        var result: [String] = []
+        result.reserveCapacity(min(limit, primary.count + fallback.count))
+        for hint in primary + fallback where seen.insert(hint).inserted {
+            result.append(hint)
+            if result.count == limit { break }
+        }
+        return result
+    }
+
+    private static func isCJK(_ character: Character) -> Bool {
+        character.unicodeScalars.contains { scalar in
+            let value = scalar.value
+            return (value >= 0x4E00 && value <= 0x9FFF)
+                || (value >= 0x3400 && value <= 0x4DBF)
+                || (value >= 0x20000 && value <= 0x2A6DF)
+                || (value >= 0xF900 && value <= 0xFAFF)
+                || (value >= 0x3040 && value <= 0x30FF)
+                || (value >= 0xAC00 && value <= 0xD7AF)
+        }
+    }
+}
+
 enum SpeechTextAlignment {
     static func annotationFlags(for words: [String]) -> [Bool] {
         var closingAtOrAfter = Array(repeating: false, count: words.count)
@@ -123,6 +209,21 @@ enum SpeechTextAlignment {
             return (characterResult + wordResult) / 2
         }
         return max(characterResult, wordResult)
+    }
+
+    /// Both matchers return absolute character offsets into the full script.
+    /// Keep that coordinate system when clamping the combined result. Adding
+    /// the recognition segment's start offset here would double-count progress
+    /// after the speech task restarts in the middle of a long script.
+    static func candidateOffset(
+        characterResult: Int,
+        wordResult: Int,
+        sourceTextCount: Int
+    ) -> Int {
+        min(
+            max(0, bestOffset(characterResult: characterResult, wordResult: wordResult)),
+            max(0, sourceTextCount)
+        )
     }
 
     static func shouldCommit(

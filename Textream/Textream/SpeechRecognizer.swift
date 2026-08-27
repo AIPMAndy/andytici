@@ -619,7 +619,11 @@ class SpeechRecognizer {
             // for every ASR start/restart. (R31)
             let contextWords = upcomingContextWords()
             // Andy题词: 合并口播常用词热词表，提升中文 ASR 准确率
-            let uniqueContextWords = Array(Set(contextWords + KouboVocabulary.words).prefix(80))
+            let uniqueContextWords = SpeechContextHints.merging(
+                contextWords,
+                KouboVocabulary.words,
+                limit: 80
+            )
             if !uniqueContextWords.isEmpty {
                 recognitionRequest.contextualStrings = uniqueContextWords
             }
@@ -827,42 +831,14 @@ class SpeechRecognizer {
         requestLock.unlock()
     }
 
-    /// Build contextual strings from the upcoming portion of the source text
-    /// using the already-lowercased char cache. Mirrors the prior behavior
-    /// (`split(separator: " ")` + `lowercased()` + `filter(isLetter/isNumber)`
-    /// + `filter(count >= 5)`) without the per-word `lowercased()` alloc or
-    /// the `String(dropFirst(_:))` copy. Lookahead is capped to bound work on
-    /// huge scripts. (R31)
+    /// Build contextual strings from the upcoming portion of the source text.
+    /// Lookahead is capped to bound work on huge scripts.
     private func upcomingContextWords(lookaheadChars: Int = 1500) -> [String] {
-        let totalLen = cachedLowercasedSource.count
-        let startOffset = min(matchStartOffset, totalLen)
-        let endOffset = min(startOffset + lookaheadChars, totalLen)
-        var contextWords: [String] = []
-        contextWords.reserveCapacity(32)
-        var wordBuf = ""
-        wordBuf.reserveCapacity(16)
-        for i in startOffset..<endOffset {
-            let ch = cachedLowercasedSource[i]
-            // Original split on " " (space only); other whitespace and `\n`
-            // survived into the word then got dropped by the alnum filter.
-            // Mirror that here: only " " is a word boundary; everything
-            // non-alnum is dropped from the running buffer.
-            if ch == " " {
-                if wordBuf.count >= 5 {
-                    contextWords.append(wordBuf)
-                }
-                wordBuf.removeAll(keepingCapacity: true)
-                continue
-            }
-            if ch.isLetter || ch.isNumber {
-                wordBuf.append(ch)
-            }
-            // else: drop (\n, tabs, punctuation)
-        }
-        if wordBuf.count >= 5 {
-            contextWords.append(wordBuf)
-        }
-        return contextWords
+        SpeechContextHints.upcoming(
+            in: cachedLowercasedSource,
+            from: matchStartOffset,
+            lookaheadCharacters: lookaheadChars
+        )
     }
 
     // MARK: - Soft restart (task only, keeps audio engine running)
@@ -901,7 +877,11 @@ class SpeechRecognizer {
 
         // Build contextual strings from the cached lowercased source. (R31)
         let contextWords = upcomingContextWords()
-        let uniqueWords = Array(Set(contextWords).prefix(50))
+        let uniqueWords = SpeechContextHints.merging(
+            contextWords,
+            KouboVocabulary.words,
+            limit: 80
+        )
         if !uniqueWords.isEmpty {
             newRequest.contextualStrings = uniqueWords
         }
@@ -1106,9 +1086,11 @@ class SpeechRecognizer {
         // Combine the two strategies. When they agree, average; when they
         // disagree, prefer the further (word-level) match so fast reading can
         // catch up instead of being dragged back by the brittle character scan.
-        let best = SpeechTextAlignment.bestOffset(characterResult: charResult, wordResult: wordResult)
-
-        let rawCandidate = min(matchStartOffset + best, sourceTextCharCount)
+        let rawCandidate = SpeechTextAlignment.candidateOffset(
+            characterResult: charResult,
+            wordResult: wordResult,
+            sourceTextCount: sourceTextCharCount
+        )
         let candidate = advancePastAnnotations(from: rawCandidate)
         guard candidate > recognizedCharCount else { return }
 
