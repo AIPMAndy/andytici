@@ -94,7 +94,7 @@ struct ContentView: View {
     private func languageSuggestionBanner(_ suggestion: SpeechLanguageSuggestion) -> some View {
         HStack(spacing: 10) {
             Image(systemName: "character.bubble.fill")
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(Color.andyGold)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("这段文字像是 \(suggestion.languageName)。")
@@ -116,7 +116,7 @@ struct ContentView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
-            .help("Switch speech recognition to \(suggestion.localeName)")
+            .help("把语音识别切到 \(suggestion.localeName)")
 
             Button {
                 ignoredLanguageIdentifier = suggestion.detectedLanguageIdentifier
@@ -135,10 +135,11 @@ struct ContentView: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
         .overlay {
             RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.accentColor.opacity(0.2))
+                .stroke(Color.andyGold.opacity(0.2))
         }
         .padding(.horizontal, 20)
         .padding(.top, 8)
+        .tint(Color.andyGold)
     }
 
     @ViewBuilder
@@ -363,6 +364,38 @@ struct ContentView: View {
                     )
                 )
 
+                // Empty-state hint — only when every page is empty and nothing
+                // else is occupying the foreground. Decorative: passes clicks
+                // through to the editor. ZStack default centering handles
+                // positioning; nothing else needed.
+                if !hasContent && !recording && !running && !isDroppingPresentation {
+                    emptyStateOverlay
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                        .transition(.opacity)
+                }
+
+                // Teleprompter-running status — top-trailing pill so the user
+                // gets feedback in the editor area, not only on the bottom CTA.
+                if running {
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(Color.andyGold)
+                            .frame(width: 6, height: 6)
+                        Text("提词中")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(.ultraThinMaterial))
+                    .overlay(Capsule().strokeBorder(Color.andyGold.opacity(0.4), lineWidth: 0.5))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    .padding(.top, 8)
+                    .padding(.trailing, 12)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+                }
+
                 // Bottom bar
                 VStack {
                     Spacer()
@@ -401,6 +434,7 @@ struct ContentView: View {
                                 .shadow(color: .black.opacity(0.2), radius: 8, y: 4)
                             }
                             .buttonStyle(.plain)
+                            .help(recording ? "暂停录音" : "用声音写稿（说的话会变成文字）")
                             .disabled(running)
                             .opacity(running ? 0.4 : 1)
 
@@ -420,11 +454,13 @@ struct ContentView: View {
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 18)
                                 .frame(height: 44)
-                                .background(running ? Color.red : Color.accentColor)
+                                .background(running ? Color.red : Color.andyGold)
                                 .clipShape(Capsule())
                                 .shadow(color: .black.opacity(0.2), radius: 10, y: 4)
                             }
                             .buttonStyle(.plain)
+                            .keyboardShortcut("p", modifiers: .command)
+                            .help(running ? "停止提词（⌘P）" : "开始提词（⌘P）")
                             .disabled((!running && !hasContent) || recording)
                             .opacity((!hasContent && !running) || recording ? 0.4 : 1)
                         }
@@ -438,7 +474,7 @@ struct ContentView: View {
                 VStack(spacing: 8) {
                     Image(systemName: "doc.text")
                         .font(.system(size: 28, weight: .light))
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(Color.andyGold)
                     Text("拖入 PowerPoint (.pptx) 文件")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(.primary)
@@ -450,8 +486,8 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(
                     RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [8]))
-                        .background(Color.accentColor.opacity(0.08).clipShape(RoundedRectangle(cornerRadius: 12)))
+                        .strokeBorder(Color.andyGold, style: StrokeStyle(lineWidth: 2, dash: [8]))
+                        .background(Color.andyGold.opacity(0.08).clipShape(RoundedRectangle(cornerRadius: 12)))
                 )
                 .padding(8)
             }
@@ -489,6 +525,76 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - Empty State
+
+    private var emptyStateOverlay: some View {
+        VStack(spacing: 16) {
+            VStack(spacing: 6) {
+                Image(systemName: "text.bubble")
+                    .font(.system(size: 32, weight: .ultraLight))
+                    .foregroundStyle(.tertiary)
+                Text("从这里开始你的提词稿")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text("点进来就能写，⌘V 直接粘贴")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.tertiary)
+            }
+            .allowsHitTesting(false)
+
+            HStack(spacing: 28) {
+                emptyStateAction(icon: "doc.on.clipboard", title: "粘贴脚本", shortcut: "⌘V")
+                emptyStateAction(icon: "folder", title: "打开文件", shortcut: "⌘O")
+                emptyStateAction(icon: "rectangle.on.rectangle.angled", title: "拖入 PPTX", shortcut: "讲稿")
+            }
+            .allowsHitTesting(false)
+
+            Button {
+                showHookTemplates = true
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("不知道怎么开头？试试「金句」模板")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundStyle(Color.andyGold)
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 4)
+        }
+        .padding(.horizontal, 32)
+        .padding(.vertical, 24)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .strokeBorder(Color.primary.opacity(0.08), style: StrokeStyle(lineWidth: 1))
+                )
+                .allowsHitTesting(false)
+        )
+        .shadow(color: .black.opacity(0.06), radius: 16, y: 4)
+        .frame(maxWidth: 460)
+    }
+
+    private func emptyStateAction(icon: String, title: String, shortcut: String) -> some View {
+        VStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .light))
+                .foregroundStyle(.secondary)
+                .frame(width: 36, height: 36)
+                .background(Circle().fill(Color.primary.opacity(0.06)))
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.primary)
+            Text(shortcut)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.tertiary)
+        }
+        .frame(width: 84)
+    }
+
     private var directorOverlay: some View {
         VStack(spacing: 20) {
             Spacer()
@@ -519,7 +625,7 @@ struct ContentView: View {
                 HStack(spacing: 8) {
                     Text(url)
                         .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(Color.andyGold)
                         .textSelection(.enabled)
 
                     Button {
@@ -579,7 +685,7 @@ struct ContentView: View {
         .background(.ultraThinMaterial)
         .toolbar {
             ToolbarItem(placement: .automatic) {
-                HStack(spacing: 8) {
+                HStack(spacing: 12) {
                     Button {
                         if isRecording {
                             stopRecording()
@@ -596,9 +702,12 @@ struct ContentView: View {
                                 .font(.system(size: 11, weight: .medium))
                                 .lineLimit(1)
                         }
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
+                    .help("打开脚本文件（⌘O）")
+
+                    toolbarDivider
 
                     // Add page button in toolbar
                     Button {
@@ -619,6 +728,9 @@ struct ContentView: View {
                         .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
+                    .help("新增加一页脚本")
+
+                    toolbarDivider
 
                     // Hook 模板入口（Andy题词 新增）
                     Button {
@@ -633,6 +745,9 @@ struct ContentView: View {
                         .foregroundStyle(Color.andyGold)
                     }
                     .buttonStyle(.plain)
+                    .help("不知道怎么开头？看看钩子模板")
+
+                    toolbarDivider
 
                     Button {
                         showSettings = true
@@ -748,7 +863,7 @@ struct ContentView: View {
         let preview = page.split(maxSplits: 4, omittingEmptySubsequences: true) { $0.isWhitespace }
             .prefix(5)
             .joined(separator: " ")
-        if preview.isEmpty { return "空白页" }
+        if preview.isEmpty { return "—" }
         // R97: prefer .utf16.count (O(1) length read) over .count (O(N) grapheme walk).
         // Dictation / typed text is BMP-only — grapheme count equals utf16 count
         // for every realistic input, so this swap is semantically identical while
@@ -775,15 +890,18 @@ struct ContentView: View {
     private var pageSidebar: some View {
         List(selection: sidebarSelection) {
             ForEach(Array(service.pages.enumerated()), id: \.offset) { index, page in
+                let preview = pagePreview(page)
+                let isEmpty = page.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 Label {
-                    Text(pagePreview(page))
+                    Text(preview)
                         .font(.system(size: 12))
+                        .foregroundStyle(isEmpty ? Color.secondary.opacity(0.6) : Color.primary)
                         .lineLimit(1)
                         .truncationMode(.tail)
                 } icon: {
                     Text("\(index + 1)")
                         .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(isEmpty ? Color.secondary : Color.primary)
                         .frame(width: 20, height: 20)
                         .background(service.readPages.contains(index) ? Color.green.opacity(0.3) : Color.primary.opacity(0.1))
                         .clipShape(RoundedRectangle(cornerRadius: 5))
@@ -801,6 +919,7 @@ struct ContentView: View {
             }
         }
         .listStyle(.sidebar)
+        .tint(Color.andyGold)
         .safeAreaInset(edge: .bottom) {
             Button {
                 if isRecording {
@@ -811,15 +930,38 @@ struct ContentView: View {
                     service.currentPageIndex = service.pages.count - 1
                 }
             } label: {
-                Label("添加页面", systemImage: "plus")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
+                HStack(spacing: 6) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("添加页面")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.primary.opacity(0.04))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .strokeBorder(Color.primary.opacity(0.08), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                )
             }
             .buttonStyle(.plain)
+            .padding(.horizontal, 8)
+            .padding(.bottom, 6)
         }
+    }
+
+    /// Faint vertical rule between toolbar items — gives the four actions
+    /// ("未命名" / "加页" / "金句" / 语言) breathing room without dominating
+    /// the chrome.
+    private var toolbarDivider: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.08))
+            .frame(width: 1, height: 14)
     }
 
     // MARK: - Actions

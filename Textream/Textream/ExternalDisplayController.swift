@@ -473,7 +473,7 @@ struct ExternalDisplayView: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 32)
                     .padding(.vertical, 16)
-                    .background(Color.accentColor)
+                    .background(Color.andyGold)
                     .clipShape(Capsule())
                 }
                 .buttonStyle(.plain)

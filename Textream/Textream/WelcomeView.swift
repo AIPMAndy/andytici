@@ -47,26 +47,29 @@ struct WelcomeView: View {
     }
 
     private var introStep: some View {
-        VStack(spacing: 16) {
-            Text("欢迎使用")
+        VStack(spacing: 12) {
+            Text("眼睛不离镜头")
                 .font(.title2)
                 .foregroundColor(AndyTheme.textPrimary)
-            Text("中文口播创作者的智能提词器")
-                .font(.title3)
+            Text("中文口播的智能提词器 — 稿子在旁边的浮窗里跟着你念")
+                .font(.callout)
                 .foregroundColor(AndyTheme.textSecondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+                .padding(.bottom, 4)
             VStack(alignment: .leading, spacing: 8) {
-                feature(icon: "tv", text: "Dynamic Island 浮窗")
-                feature(icon: "qrcode.viewfinder", text: "手机扫码远程投屏")
-                feature(icon: "eye.slash", text: "录制时自动隐藏")
-                feature(icon: "text.bubble.fill", text: "Hook 模板 + emoji 标记")
+                feature(icon: "tv", text: "Dynamic Island 浮窗，跟着你的语速滚")
+                feature(icon: "qrcode.viewfinder", text: "手机扫码，远程控制翻页 / 暂停")
+                feature(icon: "eye.slash", text: "屏幕录制时自动隐藏")
+                feature(icon: "text.bubble.fill", text: "Hook 模板 + emoji 标记重点")
             }
-            .padding(.top, 8)
+            .padding(.top, 4)
         }
     }
 
     private var presetStep: some View {
         VStack(spacing: 16) {
-            Text("了解各平台字数与节奏")
+            Text("你的稿子主要去哪里讲？")
                 .font(.title3)
                 .foregroundColor(AndyTheme.textPrimary)
             Picker("平台", selection: $selectedPreset) {
@@ -101,7 +104,7 @@ struct WelcomeView: View {
             Text("准备好了！")
                 .font(.title2)
                 .foregroundColor(AndyTheme.textPrimary)
-            Text("粘贴你的脚本，按 ⌘P 开始提词")
+            Text("粘好脚本，按 ⌘P 开念")
                 .font(.body)
                 .foregroundColor(AndyTheme.textSecondary)
         }

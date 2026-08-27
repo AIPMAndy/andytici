@@ -392,8 +392,8 @@ struct SettingsView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 7)
-                        .background(selectedTab == tab ? Color.accentColor.opacity(0.15) : Color.clear)
-                        .foregroundStyle(selectedTab == tab ? Color.accentColor : .primary)
+                        .background(selectedTab == tab ? AndyTheme.gold.opacity(0.15) : Color.clear)
+                        .foregroundStyle(selectedTab == tab ? AndyTheme.gold : .primary)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
                     .buttonStyle(.plain)
@@ -451,6 +451,7 @@ struct SettingsView: View {
         .frame(width: 500)
         .frame(minHeight: 280, maxHeight: 500)
         .background(.ultraThinMaterial)
+        .tint(AndyTheme.gold)
         .alert("重置全部设置？", isPresented: $showResetConfirmation) {
             Button("取消", role: .cancel) { }
             Button("重置", role: .destructive) {
@@ -527,20 +528,20 @@ struct SettingsView: View {
                             VStack(spacing: 6) {
                                 Text("Ag")
                                     .font(Font(preset.font(size: 16)))
-                                    .foregroundStyle(settings.fontFamilyPreset == preset ? Color.accentColor : .primary)
+                                    .foregroundStyle(settings.fontFamilyPreset == preset ? AndyTheme.gold : .primary)
                                 Text(preset.label)
                                     .font(.system(size: 11, weight: .medium))
-                                    .foregroundStyle(settings.fontFamilyPreset == preset ? Color.accentColor : .secondary)
+                                    .foregroundStyle(settings.fontFamilyPreset == preset ? AndyTheme.gold : .secondary)
                             }
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 12)
                             .background(
                                 RoundedRectangle(cornerRadius: 10)
-                                    .fill(settings.fontFamilyPreset == preset ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.05))
+                                    .fill(settings.fontFamilyPreset == preset ? AndyTheme.gold.opacity(0.12) : Color.primary.opacity(0.05))
                             )
                             .overlay(
                                 RoundedRectangle(cornerRadius: 10)
-                                    .strokeBorder(settings.fontFamilyPreset == preset ? Color.accentColor.opacity(0.4) : Color.clear, lineWidth: 1.5)
+                                    .strokeBorder(settings.fontFamilyPreset == preset ? AndyTheme.gold.opacity(0.4) : Color.clear, lineWidth: 1.5)
                             )
                         }
                         .buttonStyle(.plain)
@@ -561,20 +562,20 @@ struct SettingsView: View {
                             VStack(spacing: 6) {
                                 Text("Ag")
                                     .font(Font(settings.fontFamilyPreset.font(size: preset.pointSize * 0.7)))
-                                    .foregroundStyle(settings.fontSizePreset == preset ? Color.accentColor : .primary)
+                                    .foregroundStyle(settings.fontSizePreset == preset ? AndyTheme.gold : .primary)
                                 Text(preset.label)
                                     .font(.system(size: 11, weight: .medium))
-                                    .foregroundStyle(settings.fontSizePreset == preset ? Color.accentColor : .secondary)
+                                    .foregroundStyle(settings.fontSizePreset == preset ? AndyTheme.gold : .secondary)
                             }
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 12)
                             .background(
                                 RoundedRectangle(cornerRadius: 10)
-                                    .fill(settings.fontSizePreset == preset ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.05))
+                                    .fill(settings.fontSizePreset == preset ? AndyTheme.gold.opacity(0.12) : Color.primary.opacity(0.05))
                             )
                             .overlay(
                                 RoundedRectangle(cornerRadius: 10)
-                                    .strokeBorder(settings.fontSizePreset == preset ? Color.accentColor.opacity(0.4) : Color.clear, lineWidth: 1.5)
+                                    .strokeBorder(settings.fontSizePreset == preset ? AndyTheme.gold.opacity(0.4) : Color.clear, lineWidth: 1.5)
                             )
                         }
                         .buttonStyle(.plain)
@@ -734,83 +735,83 @@ struct SettingsView: View {
     // MARK: - Guidance Tab
 
     private var guidanceTab: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Picker("", selection: $settings.listeningMode) {
-                ForEach(ListeningMode.allCases) { mode in
-                    Text(mode.label).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-
-            Text(settings.listeningMode.description)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-
-            if settings.listeningMode == .wordTracking {
-                Divider()
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("语音识别语言")
-                        .font(.system(size: 13, weight: .medium))
-                    Picker("", selection: $settings.speechLocale) {
-                        ForEach(SFSpeechRecognizer.supportedLocales().sorted(by: { $0.identifier < $1.identifier }), id: \.identifier) { locale in
-                            Text(Locale.current.localizedString(forIdentifier: locale.identifier) ?? locale.identifier)
-                                .tag(locale.identifier)
-                        }
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 14) {
+                Picker("", selection: $settings.listeningMode) {
+                    ForEach(ListeningMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
                     }
-                    .labelsHidden()
                 }
-            }
+                .pickerStyle(.segmented)
+                .labelsHidden()
 
-            if settings.listeningMode != .classic {
-                Divider()
+                Text(settings.listeningMode.description)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("麦克风")
-                        .font(.system(size: 13, weight: .medium))
-                    Picker("", selection: $settings.selectedMicUID) {
-                        Text("系统默认").tag("")
-                        ForEach(availableMics) { mic in
-                            Text(mic.name).tag(mic.uid)
-                        }
-                    }
-                    .labelsHidden()
-                }
-            }
+                if settings.listeningMode == .wordTracking {
+                    Divider()
 
-            if settings.listeningMode != .wordTracking {
-                Divider()
-
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("滚动速度")
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("语音识别语言")
                             .font(.system(size: 13, weight: .medium))
-                        Spacer()
-                        Text(String(format: "%.1f 字/秒", settings.scrollSpeed))
-                            .font(.system(size: 12, weight: .regular, design: .monospaced))
-                            .foregroundStyle(.secondary)
+                        Picker("", selection: $settings.speechLocale) {
+                            ForEach(SFSpeechRecognizer.supportedLocales().sorted(by: { $0.identifier < $1.identifier }), id: \.identifier) { locale in
+                                Text(Locale.current.localizedString(forIdentifier: locale.identifier) ?? locale.identifier)
+                                    .tag(locale.identifier)
+                            }
+                        }
+                        .labelsHidden()
                     }
-                    Slider(
-                        value: $settings.scrollSpeed,
-                        in: 0.5...8,
-                        step: 0.5
-                    )
-                    HStack {
-                        Text("慢")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
-                        Spacer()
-                        Text("快")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
+                }
+
+                if settings.listeningMode != .classic {
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("麦克风")
+                            .font(.system(size: 13, weight: .medium))
+                        Picker("", selection: $settings.selectedMicUID) {
+                            Text("系统默认").tag("")
+                            ForEach(availableMics) { mic in
+                                Text(mic.name).tag(mic.uid)
+                            }
+                        }
+                        .labelsHidden()
+                    }
+                }
+
+                if settings.listeningMode != .wordTracking {
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("滚动速度")
+                                .font(.system(size: 13, weight: .medium))
+                            Spacer()
+                            Text(String(format: "%.1f 字/秒", settings.scrollSpeed))
+                                .font(.system(size: 12, weight: .regular, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                        }
+                        Slider(
+                            value: $settings.scrollSpeed,
+                            in: 0.5...8,
+                            step: 0.5
+                        )
+                        HStack {
+                            Text("慢")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                            Spacer()
+                            Text("快")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                        }
                     }
                 }
             }
-
-            Spacer()
+            .padding(16)
         }
-        .padding(16)
         .onAppear { availableMics = AudioInputDevice.allInputDevices() }
     }
 
@@ -1042,58 +1043,59 @@ struct SettingsView: View {
     @State private var availableScreens: [NSScreen] = []
 
     private var externalTab: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("在外接显示器或 Sidecar iPad 上显示提词器。")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("在外接显示器或 Sidecar iPad 上显示提词器。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
 
-            Picker("", selection: $settings.externalDisplayMode) {
-                ForEach(ExternalDisplayMode.allCases) { mode in
-                    Text(mode.label).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-
-            Text(settings.externalDisplayMode.description)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-
-            if settings.externalDisplayMode == .mirror {
-                Divider()
-
-                Text("镜像方向")
-                    .font(.system(size: 13, weight: .medium))
-
-                Picker("", selection: $settings.mirrorAxis) {
-                    ForEach(MirrorAxis.allCases) { axis in
-                        Text(axis.label).tag(axis)
+                Picker("", selection: $settings.externalDisplayMode) {
+                    ForEach(ExternalDisplayMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
                     }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
 
-                Text(settings.mirrorAxis.description)
+                Text(settings.externalDisplayMode.description)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
+
+                if settings.externalDisplayMode == .mirror {
+                    Divider()
+
+                    Text("镜像方向")
+                        .font(.system(size: 13, weight: .medium))
+
+                    Picker("", selection: $settings.mirrorAxis) {
+                        ForEach(MirrorAxis.allCases) { axis in
+                            Text(axis.label).tag(axis)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+
+                    Text(settings.mirrorAxis.description)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+
+                if settings.externalDisplayMode != .off {
+                    Divider()
+
+                    Text("目标屏幕")
+                        .font(.system(size: 13, weight: .medium))
+
+                    displayPicker(
+                        screens: availableScreens,
+                        selectedID: $settings.externalScreenID,
+                        onRefresh: { refreshScreens() },
+                        emptyMessage: "未检测到外接显示器。请连接显示器或开启 Sidecar。"
+                    )
+                }
             }
-
-            if settings.externalDisplayMode != .off {
-                Divider()
-
-                Text("目标屏幕")
-                    .font(.system(size: 13, weight: .medium))
-
-                displayPicker(
-                    screens: availableScreens,
-                    selectedID: $settings.externalScreenID,
-                    onRefresh: { refreshScreens() },
-                    emptyMessage: "未检测到外接显示器。请连接显示器或开启 Sidecar。"
-                )
-            }
-            Spacer()
+            .padding(16)
         }
-        .padding(16)
         .onAppear { refreshScreens() }
     }
 
@@ -1150,7 +1152,7 @@ struct SettingsView: View {
                 HStack(spacing: 10) {
                     Text(url)
                         .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(AndyTheme.gold)
                         .textSelection(.enabled)
 
                     Button {
@@ -1167,7 +1169,7 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.accentColor.opacity(0.08))
+                        .fill(AndyTheme.gold.opacity(0.08))
                 )
 
                 DisclosureGroup("高级", isExpanded: $showAdvanced) {
@@ -1273,7 +1275,7 @@ struct SettingsView: View {
                 HStack(spacing: 10) {
                     Text(url)
                         .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(AndyTheme.gold)
                         .textSelection(.enabled)
 
                     Button {
@@ -1290,7 +1292,7 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.accentColor.opacity(0.08))
+                        .fill(AndyTheme.gold.opacity(0.08))
                 )
 
                 HStack(spacing: 6) {
@@ -1388,12 +1390,12 @@ struct SettingsView: View {
                         HStack(spacing: 10) {
                             Image(systemName: "display")
                                 .font(.system(size: 16, weight: .medium))
-                                .foregroundStyle(selectedID.wrappedValue == screen.displayID ? Color.accentColor : .secondary)
+                                .foregroundStyle(selectedID.wrappedValue == screen.displayID ? AndyTheme.gold : .secondary)
                                 .frame(width: 24)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(screen.displayName)
                                     .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(selectedID.wrappedValue == screen.displayID ? Color.accentColor : .primary)
+                                    .foregroundStyle(selectedID.wrappedValue == screen.displayID ? AndyTheme.gold : .primary)
                                 Text("\(Int(screen.frame.width))×\(Int(screen.frame.height))")
                                     .font(.system(size: 10))
                                     .foregroundStyle(.secondary)
@@ -1402,13 +1404,13 @@ struct SettingsView: View {
                             if selectedID.wrappedValue == screen.displayID {
                                 Image(systemName: "checkmark.circle.fill")
                                     .font(.system(size: 14))
-                                    .foregroundStyle(Color.accentColor)
+                                    .foregroundStyle(AndyTheme.gold)
                             }
                         }
                         .padding(10)
                         .background(
                             RoundedRectangle(cornerRadius: 8)
-                                .fill(selectedID.wrappedValue == screen.displayID ? Color.accentColor.opacity(0.1) : Color.primary.opacity(0.04))
+                                .fill(selectedID.wrappedValue == screen.displayID ? AndyTheme.gold.opacity(0.1) : Color.primary.opacity(0.04))
                         )
                     }
                     .buttonStyle(.plain)
