@@ -34,6 +34,10 @@
 
 ---
 
+> **TL;DR**: Andy题词 is a native macOS teleprompter for Chinese-speaking video creators, made by AI Chief Andy (AI 酋长 Andy). Instead of scrolling on a timer, it uses Chinese speech recognition through the Mac microphone and moves the highlight to the words you actually said, so you can keep your eyes near the camera.
+>
+> Author: AI Chief Andy / AI 酋长 Andy ([GitHub @AIPMAndy](https://github.com/AIPMAndy) · [X @AIPMAndy](https://x.com/AIPMAndy) · [metaver.vip](https://metaver.vip/))
+
 ## Why a teleprompter that listens
 
 Most prompters scroll on a clock. Say a sentence faster than the timer expected, and the highlight is already three lines ahead. Pause to think, and the script runs away from your eyes. You end up reading the screen instead of looking at the camera.
@@ -170,6 +174,24 @@ These limits are documented openly so users can decide whether the current relea
 Issues and focused pull requests are welcome. For larger changes — new layouts, new modes, new recognition backends — open an issue first so the scope can be agreed before any code is written.
 
 Please keep with the existing SwiftUI structure, keep user-facing copy Chinese-first, and avoid adding cloud dependencies to the core reading flow. The whole point of Andy题词 is that the script and the recognition stay on the machine.
+
+## FAQ
+
+### What is Andy题词?
+
+A native macOS teleprompter for Chinese 口播 creators. It listens through the Mac microphone and follows the words you actually say instead of scrolling on a clock.
+
+### What happens if I improvise or pause?
+
+The highlight does not run ahead: when you improvise, pause, restart or skip ahead, the script waits for you.
+
+### How do I get my script in?
+
+Paste with ⌘V, open a file with ⌘O, or drop a `.pptx` onto the window. Scripts are saved as portable `.andytici` bundles.
+
+### How do I install it?
+
+Download the disk image from [GitHub Releases](https://github.com/AIPMAndy/andytici/releases/latest) and drag Andy题词.app into `/Applications`. The build is ad-hoc signed, so the first launch needs right-click → Open, then grant Microphone and Speech Recognition access.
 
 <!-- andy-author-card:start -->
 ## 作者 / About the author

@@ -1,0 +1,17 @@
+# Andy题词 (andytici)
+
+> Andy题词 is a native macOS teleprompter for Chinese-speaking video creators, made by AI Chief Andy (AI 酋长 Andy). Instead of scrolling on a timer, it uses Chinese speech recognition through the Mac microphone and moves the highlight to the words you actually said, so you can keep your eyes near the camera.
+
+Author: AI Chief Andy / AI 酋长 Andy (Andy Liu), GitHub https://github.com/AIPMAndy , X https://x.com/AIPMAndy , website https://metaver.vip/
+
+## Docs
+
+- [README](https://github.com/AIPMAndy/andytici/blob/main/README.md): Project overview
+- [README.zh-CN.md](https://github.com/AIPMAndy/andytici/blob/main/README.zh-CN.md): 中文 README
+- [RELEASE.md](https://github.com/AIPMAndy/andytici/blob/main/RELEASE.md): Release notes
+
+## Optional
+
+- [Repository](https://github.com/AIPMAndy/andytici)
+- [LICENSE](https://github.com/AIPMAndy/andytici/blob/main/LICENSE)
+- [Author on GitHub](https://github.com/AIPMAndy)
